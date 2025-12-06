@@ -62,7 +62,7 @@
       border-radius: 3px;
       cursor: pointer;
       transition: background-color 0.2s, box-shadow 0.2s;
-      /* aspect-ratio は使わない（JS で width/height を固定） */
+      /* 幅・高さは grid のトラックサイズで固定するので aspect-ratio は使わない */
       user-select: none;
     }
     .cell.open {
@@ -96,9 +96,9 @@
   <h2>
     ・一部の爆弾は「重爆弾」で、周囲に 2 個分として数え上げられる。<br>
     ・表示される数字は、本来の合計から 1 少ないことがある（ただし 1 未満にはならない）。<br>
-    ・旗（🚩）はメモ用。ロジックは「数字だけ」で推論します。<br>
+    ・旗（🚩）はメモ用。ロジックは数字だけで推論します。<br>
     ・ヒントは数字マスの周囲のマスを 0/1/2 として深さ制限付きで全探索し、<br>
-    　「どの解でも同じになるマス」を安全/地雷として確定します。<br>
+    　どの解でも同じになるマスを安全/地雷として確定します。<br>
     ・何も確定しないときは、安全そうな上位 3 マスに安全確率を表示します。
   </h2>
 
@@ -377,12 +377,11 @@
     init();
   </script>
 
-  <!-- ロジックソルバー：数字だけから 0/1/2 を深さ制限付きで総当たり -->
+  <!-- ロジックソルバー：数字だけから 0/1/2 を深さ制限付きで総当たり（外側も考慮） -->
   <script>
   (function() {
-    // ▼ 深さパラメータ（1クラスタあたりの最大マス数）
-    //   重かったら 11〜12 に下げる、もっと読みたいなら 14 などに上げる
-    const MAX_VARS_PER_CLUSTER = 13; // 3^13 ≒ 160万パターン
+    // 1クラスタあたりの最大マス数（3^13 ≒ 160万パターン）
+    const MAX_VARS_PER_CLUSTER = 13;
 
     // ヒントのクリア
     window.clearHints = function() {
@@ -418,7 +417,7 @@
               if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
               const n = board[ny][nx];
               if (!n.open) {
-                neighbors.push(n); // 閉じているマス（旗も含む）は全部変数候補
+                neighbors.push(n); // 閉じているマス（旗も含む）は全部候補
               }
             }
           }
@@ -433,7 +432,7 @@
     // フロンティア = 制約の隣接に現れるすべての閉じマス
     function getFrontierCells(constraints) {
       const keySet = new Set();
-      function key(c) { return c.x + '_' + c.y; }
+      function key(c) { return c.x + "_" + c.y; }
 
       for (const cons of constraints) {
         for (const n of cons.neighbors) {
@@ -445,7 +444,7 @@
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
-          const k = x + '_' + y;
+          const k = x + "_" + y;
           if (keySet.has(k)) {
             frontier.push(c);
           }
@@ -496,42 +495,50 @@
       return clusters;
     }
 
-    // 部分割り当てが制約と矛盾していないかチェック（0/1/2 の範囲で）
+    // 部分割り当てが制約と矛盾していないかチェック（外側のセルも 0..2 で考慮）
     function isPartialValid(assign, relevantConstraints) {
       for (const cons of relevantConstraints) {
         const d = cons.display;
-        let sum = 0;
-        let unassigned = 0;
+        let sumAssigned = 0;
+        let unassignedInternal = 0;
 
         for (const idx of cons.indices) {
           const v = assign[idx];
           if (v == null) {
-            unassigned++;
+            unassignedInternal++;
           } else {
-            sum += v;
+            sumAssigned += v;
           }
         }
-        const minTotal = sum;
-        const maxTotal = sum + 2 * unassigned;
 
-        // 真の合計 S ∈ {d, d+1}
-        if (maxTotal < d) return false;
-        if (minTotal > d + 1) return false;
+        // 内部の残り + 外部セルは全部 0..2 なので、
+        // 合計の最小値・最大値はこうなる
+        const minTotal = sumAssigned; // 内部は 0 以上
+        const maxTotal = sumAssigned + 2 * (unassignedInternal + cons.extCount);
+
+        // 真の合計 S は d または d+1
+        if (maxTotal < d)   return false;
+        if (minTotal > d+1) return false;
       }
       return true;
     }
 
-    // 完全割り当てが全制約を満たすかチェック
+    // 完全割り当てが全制約を満たすかチェック（外側セルも 0..2 範囲）
     function isFullValid(assign, relevantConstraints) {
       for (const cons of relevantConstraints) {
         const d = cons.display;
-        let sum = 0;
+        let sumInt = 0;
         for (const idx of cons.indices) {
-          sum += assign[idx]; // 0/1/2 全部決まっている前提
+          sumInt += assign[idx]; // 内部セルはすべて決まっている
         }
-        if (!(sum === d || sum === d + 1)) {
-          return false;
-        }
+
+        const Smin = sumInt;                      // 外部は最小 0
+        const Smax = sumInt + 2 * cons.extCount;  // 外部は最大 2 ずつ
+
+        let ok = false;
+        if (d   >= Smin && d   <= Smax) ok = true;
+        if (!ok && d+1 >= Smin && d+1 <= Smax) ok = true;
+        if (!ok) return false;
       }
       return true;
     }
@@ -548,32 +555,39 @@
       const cellIndex = new Map();
       clusterCells.forEach((c, i) => cellIndex.set(c, i));
 
-      // このクラスタに関係する制約だけ抽出し、neighbor を index に変換
+      // このクラスタに関係する制約だけ抽出し、
+      // その中で「内部セルの index 配列」と「外部セルの個数 extCount」を持つ
       const relevantConstraints = [];
       for (const cons of constraints) {
         const idxs = [];
+        let extCount = 0;
         for (const n of cons.neighbors) {
           if (cellIndex.has(n)) {
-            idxs.push(cellIndex.get(n));
+            idxs.push(cellIndex.get(n));  // クラスタ内部
+          } else {
+            // クラスタ外の閉じマス（0..2 の可能性）
+            extCount++;
           }
         }
         if (idxs.length > 0) {
-          relevantConstraints.push({ display: cons.display, indices: idxs });
+          relevantConstraints.push({
+            display: cons.display,
+            indices: idxs,
+            extCount
+          });
         }
       }
       if (relevantConstraints.length === 0) return;
 
       const assign = new Array(n).fill(null);
-      let anySolution = false;
 
       function backtrack(pos) {
         if (pos === n) {
           if (!isFullValid(assign, relevantConstraints)) return;
-          anySolution = true;
           // 解として数える
           for (let i = 0; i < n; i++) {
             const c = clusterCells[i];
-            const key = c.x + '_' + c.y;
+            const key = c.x + "_" + c.y;
             const rec = probMap.get(key);
             const v = assign[i]; // 0/1/2
             rec.total++;
@@ -593,9 +607,6 @@
       }
 
       backtrack(0);
-
-      // 解が 1 つも無いクラスタは「数字同士が矛盾している」だけなので無視
-      return anySolution;
     }
 
     // メイン：自動ヒント表示
@@ -615,7 +626,7 @@
       // フロンティアに属するマスについて、safe/total/values を記録する
       const probMap = new Map();
       for (const c of frontier) {
-        probMap.set(c.x + '_' + c.y, {
+        probMap.set(c.x + "_" + c.y, {
           safe: 0,
           total: 0,
           values: [false, false, false] // 0/1/2 を取り得たか
@@ -646,7 +657,7 @@
           const c = board[y][x];
           if (c.open || c.flag) continue; // 開いている & 旗は対象外（旗はロジックに使わない）
 
-          const key = x + '_' + y;
+          const key = x + "_" + y;
           const rec = probMap.get(key);
 
           if (rec && rec.total > 0) {
@@ -679,7 +690,7 @@
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
           if (c.open || c.flag) continue;
-          const key = x + '_' + y;
+          const key = x + "_" + y;
 
           if (forcedSafe.has(key)) {
             c.el.classList.add('logic-safe');
@@ -700,7 +711,7 @@
           for (let x = 0; x < size; x++) {
             const c = board[y][x];
             if (c.open || c.flag) continue;
-            const key = x + '_' + y;
+            const key = x + "_" + y;
             const p = cellSafeProb.get(key);
             if (p == null) continue;
             candidates.push({ x, y, p });
