@@ -97,8 +97,7 @@
     ・一部の爆弾は「重爆弾」で、周囲に 2 個分として数え上げられる。<br>
     ・表示される数字は、本来の合計から 1 少ないことがある（ただし 1 未満にはならない）。<br>
     ・旗（🚩）はメモ用。ロジックは数字だけで推論します。<br>
-    ・ヒントは数字マスの周囲のマスを 0/1/2 として深さ制限付きで全探索し、<br>
-    　どの解でも同じになるマスを安全/地雷として確定します。<br>
+    ・毎回、自動で推論して安全/地雷が確定しているマスを枠表示します。<br>
     ・何も確定しないときは、安全そうな上位 3 マスに安全確率を表示します。
   </h2>
 
@@ -377,11 +376,11 @@
     init();
   </script>
 
-  <!-- ロジックソルバー：数字だけから 0/1/2 を深さ制限付きで総当たり（外側も考慮） -->
+  <!-- ロジックソルバー：数字だけから 0/1/2 を深さ制限付きで全探索 -->
   <script>
   (function() {
-    // 1クラスタあたりの最大マス数（3^13 ≒ 160万パターン）
-    const MAX_VARS_PER_CLUSTER = 13;
+    // フロンティア全体で扱う最大変数数（3^13 ≒ 160万パターン）
+    const MAX_VARS_GLOBAL = 13;
 
     // ヒントのクリア
     window.clearHints = function() {
@@ -429,7 +428,7 @@
       return constraints;
     }
 
-    // フロンティア = 制約の隣接に現れるすべての閉じマス
+    // フロンティア = すべての制約の隣接に現れる閉じマス
     function getFrontierCells(constraints) {
       const keySet = new Set();
       function key(c) { return c.x + "_" + c.y; }
@@ -453,68 +452,24 @@
       return frontier;
     }
 
-    // 制約を介してフロンティアをクラスタに分解
-    function clusterByConstraints(frontier, constraints) {
-      const cellToConstraints = new Map();
-      frontier.forEach(c => cellToConstraints.set(c, []));
-
-      constraints.forEach((cons, idx) => {
-        cons.neighbors.forEach(n => {
-          if (cellToConstraints.has(n)) {
-            cellToConstraints.get(n).push(idx);
-          }
-        });
-      });
-
-      const visited = new Set();
-      const clusters = [];
-
-      for (const cell of frontier) {
-        if (visited.has(cell)) continue;
-        const cluster = [];
-        const queue = [cell];
-        visited.add(cell);
-
-        while (queue.length > 0) {
-          const cur = queue.shift();
-          cluster.push(cur);
-
-          const consIndices = cellToConstraints.get(cur) || [];
-          for (const cIdx of consIndices) {
-            const cons = constraints[cIdx];
-            for (const neighbor of cons.neighbors) {
-              if (cellToConstraints.has(neighbor) && !visited.has(neighbor)) {
-                visited.add(neighbor);
-                queue.push(neighbor);
-              }
-            }
-          }
-        }
-        clusters.push(cluster);
-      }
-      return clusters;
-    }
-
-    // 部分割り当てが制約と矛盾していないかチェック（外側のセルも 0..2 で考慮）
-    function isPartialValid(assign, relevantConstraints) {
-      for (const cons of relevantConstraints) {
+    // 部分割り当てが制約と矛盾していないかチェック（0/1/2 の範囲で）
+    function isPartialValid(assign, constraints) {
+      for (const cons of constraints) {
         const d = cons.display;
-        let sumAssigned = 0;
-        let unassignedInternal = 0;
+        let sum = 0;
+        let unassigned = 0;
 
         for (const idx of cons.indices) {
           const v = assign[idx];
           if (v == null) {
-            unassignedInternal++;
+            unassigned++;
           } else {
-            sumAssigned += v;
+            sum += v;
           }
         }
 
-        // 内部の残り + 外部セルは全部 0..2 なので、
-        // 合計の最小値・最大値はこうなる
-        const minTotal = sumAssigned; // 内部は 0 以上
-        const maxTotal = sumAssigned + 2 * (unassignedInternal + cons.extCount);
+        const minTotal = sum;
+        const maxTotal = sum + 2 * unassigned;
 
         // 真の合計 S は d または d+1
         if (maxTotal < d)   return false;
@@ -523,90 +478,19 @@
       return true;
     }
 
-    // 完全割り当てが全制約を満たすかチェック（外側セルも 0..2 範囲）
-    function isFullValid(assign, relevantConstraints) {
-      for (const cons of relevantConstraints) {
+    // 完全割り当てが全制約を満たすかチェック
+    function isFullValid(assign, constraints) {
+      for (const cons of constraints) {
         const d = cons.display;
-        let sumInt = 0;
+        let sum = 0;
         for (const idx of cons.indices) {
-          sumInt += assign[idx]; // 内部セルはすべて決まっている
+          sum += assign[idx]; // 0/1/2 全部決まっている前提
         }
-
-        const Smin = sumInt;                      // 外部は最小 0
-        const Smax = sumInt + 2 * cons.extCount;  // 外部は最大 2 ずつ
-
-        let ok = false;
-        if (d   >= Smin && d   <= Smax) ok = true;
-        if (!ok && d+1 >= Smin && d+1 <= Smax) ok = true;
-        if (!ok) return false;
+        if (!(sum === d || sum === d + 1)) {
+          return false;
+        }
       }
       return true;
-    }
-
-    // 1クラスタに対して 0/1/2 全パターンを総当たりして確率を計算
-    function solveCluster(clusterCells, constraints, probMap) {
-      const n = clusterCells.length;
-      if (n === 0) return;
-      if (n > MAX_VARS_PER_CLUSTER) {
-        // 深さ制限オーバー → このクラスタは解析しない
-        return;
-      }
-
-      const cellIndex = new Map();
-      clusterCells.forEach((c, i) => cellIndex.set(c, i));
-
-      // このクラスタに関係する制約だけ抽出し、
-      // その中で「内部セルの index 配列」と「外部セルの個数 extCount」を持つ
-      const relevantConstraints = [];
-      for (const cons of constraints) {
-        const idxs = [];
-        let extCount = 0;
-        for (const n of cons.neighbors) {
-          if (cellIndex.has(n)) {
-            idxs.push(cellIndex.get(n));  // クラスタ内部
-          } else {
-            // クラスタ外の閉じマス（0..2 の可能性）
-            extCount++;
-          }
-        }
-        if (idxs.length > 0) {
-          relevantConstraints.push({
-            display: cons.display,
-            indices: idxs,
-            extCount
-          });
-        }
-      }
-      if (relevantConstraints.length === 0) return;
-
-      const assign = new Array(n).fill(null);
-
-      function backtrack(pos) {
-        if (pos === n) {
-          if (!isFullValid(assign, relevantConstraints)) return;
-          // 解として数える
-          for (let i = 0; i < n; i++) {
-            const c = clusterCells[i];
-            const key = c.x + "_" + c.y;
-            const rec = probMap.get(key);
-            const v = assign[i]; // 0/1/2
-            rec.total++;
-            if (v === 0) rec.safe++;
-            rec.values[v] = true; // どの値を取り得たか（0/1/2）
-          }
-          return;
-        }
-
-        for (let v = 0; v <= 2; v++) {
-          assign[pos] = v;
-          if (isPartialValid(assign, relevantConstraints)) {
-            backtrack(pos + 1);
-          }
-          assign[pos] = null;
-        }
-      }
-
-      backtrack(0);
     }
 
     // メイン：自動ヒント表示
@@ -622,23 +506,17 @@
       }
 
       const frontier = getFrontierCells(constraints);
+      const N = frontier.length;
 
-      // フロンティアに属するマスについて、safe/total/values を記録する
-      const probMap = new Map();
-      for (const c of frontier) {
-        probMap.set(c.x + "_" + c.y, {
-          safe: 0,
-          total: 0,
-          values: [false, false, false] // 0/1/2 を取り得たか
-        });
+      // フロンティアが多すぎるときは、論理推論は諦めて確率だけにする
+      let useSearch = true;
+      if (N === 0) {
+        useSearch = false;
+      } else if (N > MAX_VARS_GLOBAL) {
+        useSearch = false;
       }
 
-      const clusters = clusterByConstraints(frontier, constraints);
-      for (const cluster of clusters) {
-        solveCluster(cluster, constraints, probMap);
-      }
-
-      // グローバル確率（数字に触れていないマス用のざっくり）
+      // グローバルなざっくり確率（数字に触れていないマス用＋フロンティアが大きすぎるとき）
       const totalCells = size * size;
       const unknownCells = totalCells - openedCount;
       let globalSafeProb = 0.5;
@@ -647,7 +525,62 @@
         globalSafeProb = Math.max(0, Math.min(1, 1 - globalMineProb));
       }
 
-      // 各マスの安全確率を決める
+      // 各マスの safe/total と 0/1/2 を取り得たかどうか
+      const probMap = new Map(); // key -> {safe,total,values[3]}
+      for (const c of frontier) {
+        probMap.set(c.x + "_" + c.y, {
+          safe: 0,
+          total: 0,
+          values: [false, false, false]
+        });
+      }
+
+      if (useSearch) {
+        // frontier のセルを 0..N-1 に割り振り
+        const varIndex = new Map();
+        frontier.forEach((c, i) => varIndex.set(c, i));
+
+        // 制約を varIndex の index に変換
+        const cons2 = [];
+        for (const cons of constraints) {
+          const idxs = [];
+          for (const n of cons.neighbors) {
+            idxs.push(varIndex.get(n));
+          }
+          cons2.push({ display: cons.display, indices: idxs });
+        }
+
+        const assign = new Array(N).fill(null);
+
+        function backtrack(pos) {
+          if (pos === N) {
+            if (!isFullValid(assign, cons2)) return;
+            // 解としてカウント
+            for (let i = 0; i < N; i++) {
+              const c = frontier[i];
+              const key = c.x + "_" + c.y;
+              const rec = probMap.get(key);
+              const v = assign[i]; // 0/1/2
+              rec.total++;
+              if (v === 0) rec.safe++;
+              rec.values[v] = true;
+            }
+            return;
+          }
+
+          for (let v = 0; v <= 2; v++) {
+            assign[pos] = v;
+            if (isPartialValid(assign, cons2)) {
+              backtrack(pos + 1);
+            }
+            assign[pos] = null;
+          }
+        }
+
+        backtrack(0);
+      }
+
+      // 各マスの安全確率 / 確定情報をまとめる
       const cellSafeProb = new Map(); // key -> safeProb
       const forcedSafe = new Set();
       const forcedMine = new Set();
@@ -655,7 +588,7 @@
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
-          if (c.open || c.flag) continue; // 開いている & 旗は対象外（旗はロジックに使わない）
+          if (c.open || c.flag) continue;
 
           const key = x + "_" + y;
           const rec = probMap.get(key);
@@ -676,7 +609,7 @@
               forcedMine.add(key);
             }
           } else {
-            // そのクラスタが大きすぎて解析しなかった or 数字に隣接していない
+            // 探索していない or このセルは制約に出てこない → グローバル確率を使う
             cellSafeProb.set(key, globalSafeProb);
           }
         }
@@ -728,16 +661,30 @@
           c.el.title = `安全候補（推定安全確率: ${(t.p * 100).toFixed(1)}%）`;
         }
 
-        statusEl.textContent =
-          '0/1/2 の全パターンを、クラスタごとに最大 ' + MAX_VARS_PER_CLUSTER + ' マスまで調べましたが、\n' +
-          '論理的に 100% 安全 / 100% 地雷になるマスはありませんでした。\n' +
-          '安全そうな候補 上位3マスを表示しています。';
+        if (!useSearch) {
+          statusEl.textContent =
+            `数字の隣接マスが多すぎるため（${N}マス）、\n` +
+            `論理推論はスキップしました。\n` +
+            `ざっくり推定の安全候補 上位3マスを表示しています。`;
+        } else {
+          statusEl.textContent =
+            '0/1/2 の全パターンを、フロンティア ' + N + ' マスに対して調べましたが、\n' +
+            '論理的に 100% 安全 / 100% 地雷になるマスはありませんでした。\n' +
+            '安全そうな候補 上位3マスを表示しています。';
+        }
       } else {
-        statusEl.textContent =
-          `論理的に安全確定: ${safeCount} マス\n` +
-          `論理的に地雷確定: ${mineCount} マス\n` +
-          `（クラスタのサイズが ${MAX_VARS_PER_CLUSTER} マスを超えた領域は、\n` +
-          `  速度優先で詳細解析をスキップしています）`;
+        if (!useSearch) {
+          statusEl.textContent =
+            `数字の隣接マスが多すぎるため（${N}マス）、\n` +
+            `論理推論はスキップしました。\n` +
+            `※ 今回はたまたま確定マスが見つかりましたが、今後は確率ヒント中心になります。`;
+        } else {
+          statusEl.textContent =
+            `論理的に安全確定: ${safeCount} マス\n` +
+            `論理的に地雷確定: ${mineCount} マス\n` +
+            `（フロンティア ${N} マスに対して 0/1/2 全探索済み。` +
+            ` 上限: ${MAX_VARS_GLOBAL} マス）`;
+        }
       }
     };
   })();
