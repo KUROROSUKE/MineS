@@ -1,275 +1,731 @@
-<!-- ロジックソルバー：数字だけから {0,1,2} の可能集合を絞る＋上位3安全マス -->
-<script>
-(function() {
-  // 何回「制約伝播」を回すか（大きくすると少しだけ強くなるが、その分だけ重くなる）
-  const MAX_PROP_ITER = 10;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ロジック付きマインスイーパ</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #f0f0f0;
+      padding: 10px;
+      user-select: none;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 10px 0;
+    }
+    #controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 18px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      background: #2196f3;
+      color: white;
+    }
+    button.flag-mode {
+      background: #ff9800;
+    }
+    #status {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 10px;
+      text-align: center;
+      white-space: pre-line;
+    }
+    #board {
+      display: grid;
+      gap: 2px;
+      box-sizing: border-box;
+      margin: 0 auto;
+      transition: all 0.2s ease-in-out;
+    }
+    .cell {
+      background: #bbb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      color: #333;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background-color 0.2s, box-shadow 0.2s;
+      aspect-ratio: 1 / 1;
+      user-select: none;
+    }
+    .cell.open {
+      background: #e0e0e0;
+    }
+    .cell.flag {
+      background: #ffeb3b;
+      color: #d32f2f;
+    }
+    .cell.mine {
+      background: #f44336;
+      color: white;
+    }
+    .timer {
+      font-size: 20px;
+      font-weight: bold;
+      margin-top: 10px;
+    }
 
-  // ヒントのクリア
-  window.clearHints = function() {
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const c = board[y][x];
-        c.el.classList.remove('logic-safe', 'logic-mine');
-        if (!c.open && !c.flag) {
-          c.el.textContent = '';
-        }
-        c.el.title = '';
+    /* ヒント表示用 */
+    .cell.logic-safe {
+      box-shadow: 0 0 0 3px #4caf50 inset; /* 緑枠：安全確定 or 安全候補 */
+    }
+    .cell.logic-mine {
+      box-shadow: 0 0 0 3px #f44336 inset; /* 赤枠：地雷確定 */
+    }
+  </style>
+</head>
+<body>
+  <h1>ロジック付きマインスイーパ</h1>
+  <h2>
+    ・一部の爆弾は「重爆弾」で、周囲に 2 個分として数え上げられる。<br>
+    ・表示される数字は、本来の合計から 1 少ないことがある（ただし 1 未満にはならない）。<br>
+    ・ヒントは「数字だけ」を使って、0/1/2 の全パターンを深さ制限付きで総当たりします。<br>
+    ・何も確定しないときは、安全そうな上位 3 マスを表示します。
+  </h2>
+
+  <div id="controls">
+    <button id="flagButton">🚩 旗モード OFF</button>
+    <button id="resetButton">🔄 リセット</button>
+  </div>
+  <div id="status"></div>
+  <div id="board"></div>
+  <div id="timer" class="timer">時間: 0</div>
+
+  <!-- ゲーム本体 -->
+  <script>
+    const boardEl   = document.getElementById('board');
+    const statusEl  = document.getElementById('status');
+    const flagButton  = document.getElementById('flagButton');
+    const resetButton = document.getElementById('resetButton');
+    const timerEl   = document.getElementById('timer');
+
+    const size = 20;
+    const mineCount = 100;          // 爆弾の個数（重爆も 1 個としてカウント）
+    const DECEPTION_PROBABILITY = 0.5; // 50%で表示数値を-1（ただし最小1）
+
+    let gameOver    = false;
+    let flagMode    = false;
+    let openedCount = 0;
+    let board       = [];
+    let timer;
+    let timerSeconds = 0;
+    let firstClick  = null;
+
+    flagButton.addEventListener('click', () => {
+      flagMode = !flagMode;
+      flagButton.textContent = flagMode ? '🚩 旗モード ON' : '🚩 旗モード OFF';
+      flagButton.classList.toggle('flag-mode', flagMode);
+    });
+
+    resetButton.addEventListener('click', init);
+
+    function requestHint() {
+      if (typeof showHint === 'function' && !gameOver) {
+        showHint();
       }
     }
-  };
 
-  // 数字マス（open & 表示あり & >0）から制約リストを作る
-  function getConstraints() {
-    const constraints = [];
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const c = board[y][x];
-        if (!c.open) continue;
-        if (!c.el.textContent) continue;
+    function init() {
+      board = [];
+      gameOver = false;
+      openedCount = 0;
+      firstClick = null;
+      statusEl.textContent = '';
+      boardEl.innerHTML = '';
+      timerSeconds = 0;
+      timerEl.textContent = `時間: ${timerSeconds}`;
+      clearInterval(timer);
+      timer = setInterval(() => {
+        if (!gameOver) {
+          timerSeconds++;
+          timerEl.textContent = `時間: ${timerSeconds}`;
+        }
+      }, 1000);
 
-        const d = parseInt(c.el.textContent, 10);
-        if (isNaN(d) || d <= 0) continue;
+      const shortSide = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+      boardEl.style.width  = `${shortSide}px`;
+      boardEl.style.height = `${shortSide}px`;
+      boardEl.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+      boardEl.style.gridTemplateRows    = `repeat(${size}, 1fr)`;
 
-        const neighbors = [];
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-            neighbors.push(board[ny][nx]);
+      for (let y = 0; y < size; y++) {
+        board[y] = [];
+        for (let x = 0; x < size; x++) {
+          const cellEl = document.createElement('div');
+          cellEl.className = 'cell';
+          cellEl.dataset.x = x;
+          cellEl.dataset.y = y;
+          boardEl.appendChild(cellEl);
+
+          const cell = {
+            x,
+            y,
+            mine: null,   // null / "normal" / "heavy"（内部だけで使用）
+            open: false,
+            flag: false,
+            count: 0,     // 真の合計（重爆は2カウント）
+            el: cellEl
+          };
+          board[y][x] = cell;
+
+          cellEl.addEventListener('click', () => handleCellClick(cell));
+        }
+      }
+
+      if (typeof clearHints === 'function') clearHints();
+    }
+
+    function handleCellClick(cell) {
+      if (gameOver) return;
+
+      // 旗モード：ON のときは旗の ON/OFF だけ
+      if (flagMode) {
+        if (!cell.open) {
+          if (typeof clearHints === 'function') clearHints();
+          cell.flag = !cell.flag;
+          cell.el.classList.toggle('flag', cell.flag);
+          cell.el.textContent = cell.flag ? '🚩' : '';
+          requestHint();
+        }
+        return;
+      }
+
+      // 通常クリック
+      if (cell.open || cell.flag) return;
+      if (typeof clearHints === 'function') clearHints();
+
+      // 初クリックで地雷配置
+      if (!firstClick) {
+        firstClick = { x: cell.x, y: cell.y };
+        placeMines();
+      }
+
+      openCell(cell);
+
+      if (cell.mine) {
+        cell.el.classList.add('mine');
+        cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
+        endGame(false);
+        return;
+      }
+
+      if (cell.count === 0) {
+        openSurrounding(cell.x, cell.y);
+      }
+
+      if (openedCount === size * size - mineCount) {
+        endGame(true);
+        return;
+      }
+
+      requestHint();
+    }
+
+    function placeMines() {
+      let mines = 0;
+      const safeCells = new Set();
+
+      // 初手とその周囲は安全
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = firstClick.x + dx;
+          const ny = firstClick.y + dy;
+          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+            safeCells.add(`${nx},${ny}`);
           }
         }
-        constraints.push({ display: d, neighbors });
       }
-    }
-    return constraints;
-  }
 
-  // 各マスのドメイン domain[y][x] = [can0, can1, can2]
-  function initDomains() {
-    const domain = [];
-    for (let y = 0; y < size; y++) {
-      domain[y] = [];
-      for (let x = 0; x < size; x++) {
-        const c = board[y][x];
-        if (c.open) {
-          // 開いているマスは必ず安全（0）
-          domain[y][x] = [true, false, false];
-        } else {
-          // 閉じているマスは 0,1,2 すべてあり得る
-          domain[y][x] = [true, true, true];
+      const heavyMineCount = Math.floor(Math.random() * (mineCount + 1));
+      let heavyMines = 0;
+
+      while (mines < mineCount) {
+        const x = Math.floor(Math.random() * size);
+        const y = Math.floor(Math.random() * size);
+        const cell = board[y][x];
+        if (!cell.mine && !safeCells.has(`${x},${y}`)) {
+          if (heavyMines < heavyMineCount) {
+            cell.mine = "heavy";
+            heavyMines++;
+          } else {
+            cell.mine = "normal";
+          }
+          mines++;
+        }
+      }
+
+      // 真の合計カウント（重爆弾は2カウント）
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (board[y][x].mine) continue;
+          board[y][x].count = getMineCount(x, y);
         }
       }
     }
-    return domain;
-  }
 
-  // 1 つの制約 cons で、各 neighbor のドメインを削る
-  function propagateConstraint(cons, domain) {
-    let changed = false;
-    const d = cons.display;
+    function getMineCount(x, y) {
+      let count = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+            const mineType = board[ny][nx].mine;
+            if (mineType === "normal") count += 1;
+            else if (mineType === "heavy") count += 2;
+          }
+        }
+      }
+      return count;
+    }
 
-    // 事前に neighbors ごとの min/max を計算しておく
-    const mins = [];
-    const maxs = [];
-    for (let i = 0; i < cons.neighbors.length; i++) {
-      const c = cons.neighbors[i];
-      const dom = domain[c.y][c.x];
-      const vals = [];
-      for (let v = 0; v <= 2; v++) if (dom[v]) vals.push(v);
-      if (vals.length === 0) {
-        // すでに矛盾しているが、ここでは何もしない
-        mins[i] = 0;
-        maxs[i] = 0;
+    function openCell(cell) {
+      if (cell.open) return;
+      cell.open = true;
+      openedCount++;
+      cell.el.classList.add('open');
+
+      if (cell.count > 0) {
+        let displayCount = cell.count;
+        if (Math.random() < DECEPTION_PROBABILITY) {
+          displayCount = Math.max(1, cell.count - 1);
+        }
+        cell.el.textContent = displayCount;
+        cell.el.style.color = getNumberColor(displayCount);
+      }
+
+      if (openedCount === size * size - mineCount) {
+        endGame(true);
+      }
+    }
+
+    function getNumberColor(num) {
+      switch (num) {
+        case 1: return '#1976d2';
+        case 2: return '#388e3c';
+        case 3: return '#d32f2f';
+        case 4: return '#512da8';
+        case 5: return '#ffa000';
+        case 6: return '#00796b';
+        case 7: return '#000000';
+        case 8: return '#7b1fa2';
+        default: return '#000000';
+      }
+    }
+
+    function openSurrounding(x, y) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+            const neighbor = board[ny][nx];
+            if (!neighbor.open && !neighbor.mine && !neighbor.flag) {
+              openCell(neighbor);
+              if (neighbor.count === 0) {
+                openSurrounding(nx, ny);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    function endGame(win) {
+      gameOver = true;
+      clearInterval(timer);
+      if (win) {
+        statusEl.textContent = `🎉 勝利！ 時間: ${timerSeconds}秒`;
       } else {
-        mins[i] = Math.min(...vals);
-        maxs[i] = Math.max(...vals);
-      }
-    }
-
-    for (let idx = 0; idx < cons.neighbors.length; idx++) {
-      const c = cons.neighbors[idx];
-      const dom = domain[c.y][c.x];
-
-      // もともとの候補を覚えておく
-      const original = dom.slice();
-      const allowed = [false, false, false];
-
-      for (let v = 0; v <= 2; v++) {
-        if (!original[v]) continue;
-
-        // このセルを v としたときに、他が何かしらの値を取って
-        // 合計 S ∈ {d, d+1} を作れるかどうかをチェック
-        let feasible = false;
-
-        // 他のセルの min/max
-        let otherMin = 0;
-        let otherMax = 0;
-        for (let j = 0; j < cons.neighbors.length; j++) {
-          if (j === idx) continue;
-          otherMin += mins[j];
-          otherMax += maxs[j];
-        }
-
-        for (const S of [d, d + 1]) {
-          // S からこのセルの v を引いた残りを、他のセルで作れるか？
-          const rest = S - v;
-          if (rest < otherMin || rest > otherMax) {
-            continue; // この S では無理
+        statusEl.textContent = `💥 ゲームオーバー`;
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const cell = board[y][x];
+            if (cell.mine && !cell.open) {
+              cell.el.classList.add('mine');
+              cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
+            }
           }
-          // 他のセルの値は 0/1/2 のレンジなので、
-          // 「rest が [otherMin, otherMax] に入っている」なら
-          // 何かしらの組み合わせはある、とみなす（過小ではなく過大評価）
-          feasible = true;
-          break;
-        }
-
-        if (feasible) {
-          allowed[v] = true;
-        }
-      }
-
-      // allowed がすべて false になる場合は、「この制約だけでは矛盾」というだけなので、
-      // ここではドメインを壊さない
-      if (!allowed[0] && !allowed[1] && !allowed[2]) {
-        continue;
-      }
-
-      for (let v = 0; v <= 2; v++) {
-        if (!allowed[v] && dom[v]) {
-          dom[v] = false;
-          changed = true;
         }
       }
     }
 
-    return changed;
-  }
+    init();
+  </script>
 
-  // 制約全体を MAX_PROP_ITER 回まで回してドメインを収束させる
-  function propagateAll(constraints, domain) {
-    let changed = true;
-    let iter = 0;
-    while (changed && iter < MAX_PROP_ITER) {
-      changed = false;
-      iter++;
+  <!-- ロジックソルバー：数字だけから 0/1/2 を深さ制限付きで総当たり -->
+  <script>
+  (function() {
+    // ▼ ここが「深さ」パラメータ。重かったら 11〜12 に下げる、もっと読みたいなら 14 などに上げる
+    const MAX_VARS_PER_CLUSTER = 13; // 変数の数（マス数）。3^13 ≒ 160万通り。
+
+    // ヒントのクリア
+    window.clearHints = function() {
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          c.el.classList.remove('logic-safe', 'logic-mine');
+          if (!c.open && !c.flag) {
+            c.el.textContent = '';
+          }
+          c.el.title = '';
+        }
+      }
+    };
+
+    // 数字マス（open & 表示あり & >0）から制約リストを作る
+    function getConstraints() {
+      const constraints = [];
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          if (!c.open) continue;
+          if (!c.el.textContent) continue;
+
+          const d = parseInt(c.el.textContent, 10);
+          if (isNaN(d) || d <= 0) continue;
+
+          const neighbors = [];
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+              const n = board[ny][nx];
+              if (!n.open) {
+                neighbors.push(n); // 閉じているマス（旗も含む）は全部変数候補
+              }
+            }
+          }
+          if (neighbors.length > 0) {
+            constraints.push({ display: d, neighbors });
+          }
+        }
+      }
+      return constraints;
+    }
+
+    // フロンティア = どれかの数字に隣接している閉じたマス
+    function getFrontierCells(constraints) {
+      const set = new Set();
+      function key(c) { return c.x + '_' + c.y; }
+
       for (const cons of constraints) {
-        if (propagateConstraint(cons, domain)) {
-          changed = true;
+        for (const n of cons.neighbors) {
+          set.add(key(n));
         }
       }
-    }
-  }
-
-  // メイン：自動ヒント表示
-  window.showHint = function() {
-    if (gameOver) return;
-
-    clearHints();
-
-    const constraints = getConstraints();
-    if (constraints.length === 0) {
-      statusEl.textContent = 'まだ数字が開いていないので、何も推論できません。';
-      return;
-    }
-
-    const domain = initDomains();
-    propagateAll(constraints, domain);
-
-    // 各セルの「安全確定 / 地雷確定」を判定
-    const safeKeys = [];
-    const mineKeys = [];
-    const safeProbMap = new Map(); // key => safeProb（上位3用）
-
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const c = board[y][x];
-        if (c.open || c.flag) continue;
-
-        const dom = domain[y][x];
-        const key = `${x}_${y}`;
-
-        const possible = [];
-        for (let v = 0; v <= 2; v++) if (dom[v]) possible.push(v);
-
-        if (possible.length === 0) {
-          // 矛盾しているだけなので、とりあえず 1/3 としておく
-          safeProbMap.set(key, 1/3);
-          continue;
+      const list = [];
+      const keyToCell = new Map();
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          const k = x + '_' + y;
+          if (set.has(k)) {
+            list.push(c);
+            keyToCell.set(k, c);
+          }
         }
-
-        // 安全確定 / 地雷確定
-        const only0   = (possible.length === 1 && possible[0] === 0);
-        const no0     = !dom[0] && (dom[1] || dom[2]); // 1 or 2 のみ
-
-        if (only0) {
-          safeKeys.push(key);
-        } else if (no0) {
-          mineKeys.push(key);
-        }
-
-        // 簡易な安全確率：ドメインを一様分布とみなす
-        let mineVals = 0;
-        for (const v of possible) if (v > 0) mineVals++;
-        const safeProb = 1 - mineVals / possible.length;
-        safeProbMap.set(key, safeProb);
       }
+      return { frontier: list, keyToCell };
     }
 
-    // まず「論理的に 100%」のマスをマーク
-    let safeCount = 0;
-    let mineCount = 0;
+    // 制約を介してフロンティアをクラスタに分解
+    function clusterByConstraints(frontier, constraints) {
+      const cellToConstraints = new Map();
+      frontier.forEach(c => cellToConstraints.set(c, []));
 
-    for (const key of safeKeys) {
-      const [xStr, yStr] = key.split('_');
-      const x = Number(xStr), y = Number(yStr);
-      const c = board[y][x];
-      c.el.classList.add('logic-safe');
-      c.el.title = '論理的に安全が確定しています';
-      safeCount++;
-    }
-    for (const key of mineKeys) {
-      const [xStr, yStr] = key.split('_');
-      const x = Number(xStr), y = Number(yStr);
-      const c = board[y][x];
-      c.el.classList.add('logic-mine');
-      c.el.title = '論理的に地雷が確定しています（普通 or 重爆）';
-      mineCount++;
+      constraints.forEach((cons, idx) => {
+        cons.neighbors.forEach(n => {
+          if (cellToConstraints.has(n)) {
+            cellToConstraints.get(n).push(idx);
+          }
+        });
+      });
+
+      const visited = new Set();
+      const clusters = [];
+
+      for (const cell of frontier) {
+        if (visited.has(cell)) continue;
+        const cluster = [];
+        const queue = [cell];
+        visited.add(cell);
+
+        while (queue.length > 0) {
+          const cur = queue.shift();
+          cluster.push(cur);
+
+          const consIndices = cellToConstraints.get(cur) || [];
+          for (const cIdx of consIndices) {
+            const cons = constraints[cIdx];
+            for (const neighbor of cons.neighbors) {
+              if (cellToConstraints.has(neighbor) && !visited.has(neighbor)) {
+                visited.add(neighbor);
+                queue.push(neighbor);
+              }
+            }
+          }
+        }
+        clusters.push(cluster);
+      }
+      return clusters;
     }
 
-    // 一つも確定しなかったら、安全そうな上位3マスを表示
-    if (safeCount === 0 && mineCount === 0) {
-      const candidates = [];
+    // 部分割り当てが制約と矛盾していないかチェック（0/1/2 の範囲で）
+    function isPartialValid(assign, relevantConstraints) {
+      for (const cons of relevantConstraints) {
+        const d = cons.display;
+        let sum = 0;
+        let unassigned = 0;
+
+        for (const idx of cons.indices) {
+          const v = assign[idx];
+          if (v == null) {
+            unassigned++;
+          } else {
+            sum += v;
+          }
+        }
+        const minTotal = sum;
+        const maxTotal = sum + 2 * unassigned;
+
+        // 真の合計 S ∈ {d, d+1}
+        if (maxTotal < d) return false;
+        if (minTotal > d + 1) return false;
+      }
+      return true;
+    }
+
+    // 完全割り当てが全制約を満たすかチェック
+    function isFullValid(assign, relevantConstraints) {
+      for (const cons of relevantConstraints) {
+        const d = cons.display;
+        let sum = 0;
+        for (const idx of cons.indices) {
+          sum += assign[idx]; // 0/1/2 全部決まっている前提
+        }
+        if (!(sum === d || sum === d + 1)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // 1クラスタに対して 0/1/2 全パターンを総当たりして確率を計算
+    function solveCluster(clusterCells, constraints, probMap) {
+      const n = clusterCells.length;
+      if (n === 0) return;
+
+      if (n > MAX_VARS_PER_CLUSTER) {
+        // 深さ制限オーバー → このクラスタは確率計算をしない
+        return;
+      }
+
+      const cellIndex = new Map();
+      clusterCells.forEach((c, i) => cellIndex.set(c, i));
+
+      // このクラスタに関係する制約だけ抽出し、neighbor を index に変換
+      const relevantConstraints = [];
+      for (const cons of constraints) {
+        const idxs = [];
+        for (const n of cons.neighbors) {
+          if (cellIndex.has(n)) {
+            idxs.push(cellIndex.get(n));
+          }
+        }
+        if (idxs.length > 0) {
+          relevantConstraints.push({ display: cons.display, indices: idxs });
+        }
+      }
+      if (relevantConstraints.length === 0) return;
+
+      const assign = new Array(n).fill(null);
+      let anySolution = false;
+
+      function backtrack(pos) {
+        if (pos === n) {
+          if (!isFullValid(assign, relevantConstraints)) return;
+          anySolution = true;
+          // 解として数える
+          for (let i = 0; i < n; i++) {
+            const c = clusterCells[i];
+            const key = c.x + '_' + c.y;
+            const rec = probMap.get(key);
+            const v = assign[i]; // 0/1/2
+            rec.total++;
+            if (v === 0) rec.safe++;
+            rec.values[v] = true; // どの値を取り得たか（0/1/2）
+          }
+          return;
+        }
+
+        for (let v = 0; v <= 2; v++) {
+          assign[pos] = v;
+          if (isPartialValid(assign, relevantConstraints)) {
+            backtrack(pos + 1);
+          }
+          assign[pos] = null;
+        }
+      }
+
+      backtrack(0);
+
+      // 解が 1 つも無いクラスタは「数字同士が矛盾している」だけなので、今回は無視する
+      return anySolution;
+    }
+
+    // メイン：自動ヒント表示
+    window.showHint = function() {
+      if (gameOver) return;
+
+      clearHints();
+
+      const constraints = getConstraints();
+      if (constraints.length === 0) {
+        statusEl.textContent = 'まだ数字が開いていないので、何も推論できません。';
+        return;
+      }
+
+      const { frontier } = getFrontierCells(constraints);
+
+      // フロンティアに属するマスについて、safe/total/values を記録する
+      const probMap = new Map();
+      for (const c of frontier) {
+        probMap.set(c.x + '_' + c.y, {
+          safe: 0,
+          total: 0,
+          values: [false, false, false] // 0/1/2 を取り得たか
+        });
+      }
+
+      const clusters = clusterByConstraints(frontier, constraints);
+      for (const cluster of clusters) {
+        solveCluster(cluster, constraints, probMap);
+      }
+
+      // グローバル確率（数字に触れていないマス用）
+      const totalCells = size * size;
+      const unknownCells = totalCells - openedCount;
+      let globalSafeProb = 0.5;
+      if (unknownCells > 0) {
+        const globalMineProb = mineCount / unknownCells;
+        globalSafeProb = Math.max(0, Math.min(1, 1 - globalMineProb));
+      }
+
+      // 各マスの安全確率を決める
+      const cellSafeProb = new Map(); // key -> safeProb
+      const forcedSafe = new Set();
+      const forcedMine = new Set();
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          if (c.open || c.flag) continue; // 開いている & 旗は対象外（旗はロジックに使わない）
+
+          const key = x + '_' + y;
+          const rec = probMap.get(key);
+
+          if (rec && rec.total > 0) {
+            const safeProb = rec.safe / rec.total;
+            cellSafeProb.set(key, safeProb);
+
+            const can0 = rec.values[0];
+            const can1 = rec.values[1];
+            const can2 = rec.values[2];
+
+            if (can0 && !can1 && !can2) {
+              // 0 しか取り得ない → 安全
+              forcedSafe.add(key);
+            } else if (!can0 && (can1 || can2)) {
+              // 1/2 しか取り得ない → 地雷（普通 or 重爆）確定
+              forcedMine.add(key);
+            }
+          } else {
+            // そのクラスタが大きすぎて解析しなかった or 数字に隣接していない
+            cellSafeProb.set(key, globalSafeProb);
+          }
+        }
+      }
+
+      // まずは論理的に 0% / 100% が出たところ
+      let safeCount = 0;
+      let mineCount = 0;
+
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
           if (c.open || c.flag) continue;
-          const key = `${x}_${y}`;
-          const p = safeProbMap.get(key);
-          if (p == null) continue;
-          candidates.push({ x, y, p });
+          const key = x + '_' + y;
+
+          if (forcedSafe.has(key)) {
+            c.el.classList.add('logic-safe');
+            c.el.title = '論理的に安全が確定しています（0以外を取り得ない）';
+            safeCount++;
+          } else if (forcedMine.has(key)) {
+            c.el.classList.add('logic-mine');
+            c.el.title = '論理的に地雷が確定しています（1 or 2 しか取り得ない）';
+            mineCount++;
+          }
         }
       }
 
-      candidates.sort((a, b) => b.p - a.p);
-      const top = candidates.slice(0, 3);
+      // 何も確定しなかったら、安全そうな上位3マスを表示
+      if (safeCount === 0 && mineCount === 0) {
+        const candidates = [];
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const c = board[y][x];
+            if (c.open || c.flag) continue;
+            const key = x + '_' + y;
+            const p = cellSafeProb.get(key);
+            if (p == null) continue;
+            candidates.push({ x, y, p });
+          }
+        }
 
-      for (const t of top) {
-        const c = board[t.y][t.x];
-        c.el.classList.add('logic-safe');
-        c.el.textContent = `${Math.round(t.p * 100)}%`;
-        c.el.title = `安全候補（推定安全確率: ${(t.p * 100).toFixed(1)}%）`;
+        candidates.sort((a, b) => b.p - a.p);
+        const top = candidates.slice(0, 3);
+
+        for (const t of top) {
+          const c = board[t.y][t.x];
+          c.el.classList.add('logic-safe');
+          c.el.textContent = `${Math.round(t.p * 100)}%`;
+          c.el.title = `安全候補（推定安全確率: ${(t.p * 100).toFixed(1)}%）`;
+        }
+
+        statusEl.textContent =
+          '0/1/2 の全パターンを深さ制限 ' + MAX_VARS_PER_CLUSTER +
+          ' マスまで調べましたが、\n' +
+          '論理的に 100% 安全 or 100% 地雷になるマスはありません。\n' +
+          '安全そうな候補 上位3マスを示しています。';
+      } else {
+        statusEl.textContent =
+          `論理的に安全確定: ${safeCount} マス\n` +
+          `論理的に地雷確定: ${mineCount} マス\n` +
+          `（クラスタのサイズが ${MAX_VARS_PER_CLUSTER} マスを超えた領域は、\n` +
+          `  速度優先で詳細解析をスキップしています）`;
       }
-
-      statusEl.textContent =
-        '制約を ' + MAX_PROP_ITER + ' 回伝播しましたが、\n' +
-        '論理的に 100% 安全 / 100% 地雷になるマスはありませんでした。\n' +
-        '安全そうな候補 上位3マスを表示しています。';
-    } else {
-      statusEl.textContent =
-        `論理的に安全確定: ${safeCount} マス\n` +
-        `論理的に地雷確定: ${mineCount} マス`;
-    }
-  };
-})();
-</script>
+    };
+  })();
+  </script>
+</body>
+</html>
