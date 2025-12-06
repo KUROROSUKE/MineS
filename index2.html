@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>マインスイーパ</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #f0f0f0;
+      padding: 10px;
+      user-select: none;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 10px 0;
+    }
+    #controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 18px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      background: #2196f3;
+      color: white;
+    }
+    button.flag-mode {
+      background: #ff9800;
+    }
+    #status {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 10px;
+      text-align: center;
+      white-space: pre-line;
+    }
+    #board {
+      display: grid;
+      gap: 2px;
+      box-sizing: border-box;
+      margin: 0 auto;
+      transition: all 0.2s ease-in-out;
+    }
+    .cell {
+      background: #bbb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      color: #333;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background-color 0.2s, box-shadow 0.2s;
+      aspect-ratio: 1 / 1;
+      user-select: none;
+    }
+    .cell.open {
+      background: #e0e0e0;
+    }
+    .cell.flag {
+      background: #ffeb3b;
+      color: #d32f2f;
+    }
+    .cell.mine {
+      background: #f44336;
+      color: white;
+    }
+    .timer {
+      font-size: 20px;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    /* ▼ ヒント表示用の装飾 ▼ */
+    .cell.logic-safe {
+      box-shadow: 0 0 0 3px #4caf50 inset; /* 緑枠：安全確定 */
+    }
+    .cell.logic-mine {
+      box-shadow: 0 0 0 3px #f44336 inset; /* 赤枠：地雷確定 */
+    }
+    .cell.logic-prob {
+      box-shadow: 0 0 0 2px #9e9e9e inset; /* グレー枠：確率表示 */
+      font-size: 11px;
+    }
+
+    @media (max-width: 600px) {
+      button {
+        font-size: 16px;
+        padding: 10px 20px;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      #status, .timer {
+        font-size: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>マインスイーパ</h1>
+  <h2>1マスで爆弾2個分カウントの重爆弾が紛れ込んでいる。<br>また、本来より1少なく表示される場合がある。（最小値1）</h2>
+
+  <div id="controls">
+    <button id="flagButton">🚩 旗モード OFF</button>
+    <button id="resetButton">🔄 リセット</button>
+  </div>
+  <div id="status"></div>
+  <div id="board"></div>
+  <div id="timer" class="timer">時間: 0</div>
+
+  <!-- ゲーム本体 -->
+  <script>
+    const boardEl = document.getElementById('board');
+    const statusEl = document.getElementById('status');
+    const flagButton = document.getElementById('flagButton');
+    const resetButton = document.getElementById('resetButton');
+    const timerEl = document.getElementById('timer');
+
+    const size = 20;
+    const mineCount = 100;
+    const DECEPTION_PROBABILITY = 0.5; // 50%で表示数値を-1（ただし最小1）
+    let gameOver = false;
+    let flagMode = false;
+    let openedCount = 0;
+    let board = [];
+    let timer;
+    let timerSeconds = 0;
+    let firstClick = null;
+
+    flagButton.addEventListener('click', () => {
+      flagMode = !flagMode;
+      flagButton.textContent = flagMode ? '🚩 旗モード ON' : '🚩 旗モード OFF';
+      flagButton.classList.toggle('flag-mode', flagMode);
+    });
+
+    resetButton.addEventListener('click', init);
+
+    function requestHint() {
+      if (typeof showHint === 'function' && !gameOver) {
+        showHint();
+      }
+    }
+
+    function init() {
+      board = [];
+      gameOver = false;
+      openedCount = 0;
+      firstClick = null;
+      statusEl.textContent = '';
+      boardEl.innerHTML = '';
+      timerSeconds = 0;
+      timerEl.textContent = `時間: ${timerSeconds}`;
+      clearInterval(timer);
+      timer = setInterval(() => {
+        if (!gameOver) {
+          timerSeconds++;
+          timerEl.textContent = `時間: ${timerSeconds}`;
+        }
+      }, 1000);
+
+      const shortSide = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+      boardEl.style.width = `${shortSide}px`;
+      boardEl.style.height = `${shortSide}px`;
+      boardEl.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+      boardEl.style.gridTemplateRows = `repeat(${size}, 1fr)`;
+
+      for (let y = 0; y < size; y++) {
+        board[y] = [];
+        for (let x = 0; x < size; x++) {
+          const cellEl = document.createElement('div');
+          cellEl.className = 'cell';
+          cellEl.dataset.x = x;
+          cellEl.dataset.y = y;
+          boardEl.appendChild(cellEl);
+
+          const cell = {
+            x,
+            y,
+            mine: null, // null / "normal" / "heavy"
+            open: false,
+            flag: false,
+            count: 0,
+            el: cellEl
+          };
+          board[y][x] = cell;
+
+          cellEl.addEventListener('click', () => handleCellClick(cell));
+        }
+      }
+
+      if (typeof clearHints === 'function') clearHints();
+    }
+
+    function handleCellClick(cell) {
+      if (gameOver) return;
+
+      // 旗モード時
+      if (flagMode) {
+        if (!cell.open) {
+          if (typeof clearHints === 'function') clearHints();
+          cell.flag = !cell.flag;
+          cell.el.classList.toggle('flag', cell.flag);
+          cell.el.textContent = cell.flag ? '🚩' : '';
+          requestHint();
+        }
+        return;
+      }
+
+      // 通常クリック
+      if (cell.open || cell.flag) return;
+      if (typeof clearHints === 'function') clearHints();
+
+      // 初クリックで地雷配置
+      if (!firstClick) {
+        firstClick = { x: cell.x, y: cell.y };
+        placeMines();
+      }
+
+      openCell(cell);
+
+      if (cell.mine) {
+        cell.el.classList.add('mine');
+        cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
+        endGame(false);
+        return;
+      }
+
+      if (cell.count === 0) {
+        openSurrounding(cell.x, cell.y);
+      }
+
+      if (openedCount === size * size - mineCount) {
+        endGame(true);
+        return;
+      }
+
+      requestHint();
+    }
+
+    function placeMines() {
+      let mines = 0;
+      const safeCells = new Set();
+
+      // 初手とその周囲は安全
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = firstClick.x + dx;
+          const ny = firstClick.y + dy;
+          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+            safeCells.add(`${nx},${ny}`);
+          }
+        }
+      }
+
+      const heavyMineCount = Math.floor(Math.random() * (mineCount + 1));
+      let heavyMines = 0;
+
+      while (mines < mineCount) {
+        const x = Math.floor(Math.random() * size);
+        const y = Math.floor(Math.random() * size);
+        const cell = board[y][x];
+        if (!cell.mine && !safeCells.has(`${x},${y}`)) {
+          if (heavyMines < heavyMineCount) {
+            cell.mine = "heavy";
+            heavyMines++;
+          } else {
+            cell.mine = "normal";
+          }
+          mines++;
+        }
+      }
+
+      // 本当の合計カウント（重爆弾は2カウント）
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (board[y][x].mine) continue;
+          board[y][x].count = getMineCount(x, y);
+        }
+      }
+    }
+
+    function getMineCount(x, y) {
+      let count = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+            const mineType = board[ny][nx].mine;
+            if (mineType === "normal") count += 1;
+            else if (mineType === "heavy") count += 2;
+          }
+        }
+      }
+      return count;
+    }
+
+    function openCell(cell) {
+      if (cell.open) return;
+      cell.open = true;
+      openedCount++;
+      cell.el.classList.add('open');
+
+      if (cell.count > 0) {
+        let displayCount = cell.count;
+        if (Math.random() < DECEPTION_PROBABILITY) {
+          displayCount = Math.max(1, cell.count - 1);
+        }
+        cell.el.textContent = displayCount;
+        cell.el.style.color = getNumberColor(displayCount);
+      }
+
+      if (openedCount === size * size - mineCount) {
+        endGame(true);
+      }
+    }
+
+    function getNumberColor(num) {
+      switch (num) {
+        case 1: return '#1976d2';
+        case 2: return '#388e3c';
+        case 3: return '#d32f2f';
+        case 4: return '#512da8';
+        case 5: return '#ffa000';
+        case 6: return '#00796b';
+        case 7: return '#000000';
+        case 8: return '#7b1fa2';
+        default: return '#000000';
+      }
+    }
+
+    function openSurrounding(x, y) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+            const neighbor = board[ny][nx];
+            if (!neighbor.open && !neighbor.mine && !neighbor.flag) {
+              openCell(neighbor);
+              if (neighbor.count === 0) {
+                openSurrounding(nx, ny);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    function endGame(win) {
+      gameOver = true;
+      clearInterval(timer);
+      if (win) {
+        statusEl.textContent = `🎉 勝利！ 時間: ${timerSeconds}秒`;
+      } else {
+        statusEl.textContent = `💥 ゲームオーバー`;
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const cell = board[y][x];
+            if (cell.mine && !cell.open) {
+              cell.el.classList.add('mine');
+              cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
+            }
+          }
+        }
+      }
+    }
+
+    init();
+  </script>
+
+  <!-- ヒントソルバー：各マスごとにローカル制約を全探索 -->
+  <script>
+  (function() {
+    const STATE = { SAFE: 0, MINE_NORMAL: 1, MINE_HEAVY: 2 };
+    const MAX_LOCAL_VARS = 13; // 1マスあたりのローカル変数数の上限（3^13 まで）
+
+    // ヒントのクリア
+    window.clearHints = function() {
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          c.el.classList.remove('logic-safe', 'logic-mine', 'logic-prob');
+          c.el.title = '';
+          if (!c.open && !c.flag) {
+            c.el.textContent = '';
+          }
+        }
+      }
+    };
+
+    // 数字マスとその周囲の制約を集める
+    function getConstraints() {
+      const list = [];
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          if (!c.open) continue;
+          if (c.el.textContent === '') continue;
+
+          const d = parseInt(c.el.textContent);
+          if (isNaN(d) || d <= 0) continue;
+
+          const neighbors = [];
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+              neighbors.push(board[ny][nx]);
+            }
+          }
+
+          list.push({
+            x,
+            y,
+            display: d,
+            neighbors
+          });
+        }
+      }
+      return list;
+    }
+
+    // 部分割り当て assignment が制約をまだ満たし得るか（S ∈ {d, d+1}）
+    function isValidLocal(constraints, assignment, variableKeySet) {
+      for (let c of constraints) {
+        let currentSum = 0;
+        let unknownCount = 0;
+        let flagMin = 0;
+        let flagMax = 0;
+
+        for (let n of c.neighbors) {
+          if (n.open) continue;
+
+          if (n.flag) {
+            // 旗は必ず 1〜2 の地雷
+            flagMin += 1;
+            flagMax += 2;
+            continue;
+          }
+
+          const key = `${n.x}_${n.y}`;
+          if (variableKeySet.has(key)) {
+            if (assignment.has(key)) {
+              currentSum += assignment.get(key); // 0 / 1 / 2
+            } else {
+              unknownCount++;
+            }
+          } else {
+            // ローカル問題に含めていない未開セル → 0〜2 どれでも取り得る
+            unknownCount++;
+          }
+        }
+
+        const d = c.display;
+        const minTotal = currentSum + flagMin;
+        const maxTotal = currentSum + flagMax + unknownCount * 2;
+
+        // 真の合計 S は display または display+1
+        if (maxTotal < d) return false;
+        if (minTotal > d + 1) return false;
+      }
+      return true;
+    }
+
+    // 1マス（targetCell）について、そのマスに関わるローカル制約だけで確率を計算
+    function computeLocalProbForCell(targetCell, constraints, cellToConstraints) {
+      const keyTarget = `${targetCell.x}_${targetCell.y}`;
+
+      // そもそもどの制約にも出てこない（数字に隣接していない）なら何も分からない
+      const initialConsIdxs = cellToConstraints.get(keyTarget);
+      if (!initialConsIdxs || initialConsIdxs.length === 0) {
+        return null;
+      }
+
+      const variableCells = new Set();      // Cell オブジェクトの集合
+      const variableList = [];              // 順序付きリスト
+      const variableKeySet = new Set();     // "x_y" の集合
+      const constraintIndexSet = new Set(); // 使う制約の index 集合
+      const queue = [];
+
+      function addVariableCell(c) {
+        const k = `${c.x}_${c.y}`;
+        if (!variableKeySet.has(k) && !c.open && !c.flag) {
+          variableKeySet.add(k);
+          variableCells.add(c);
+          variableList.push(c);
+          queue.push(c);
+        }
+      }
+
+      addVariableCell(targetCell);
+
+      // BFSで「target に関わる制約」と「その制約に出てくる近傍の未開セル」を集める
+      while (queue.length > 0 && variableList.length < MAX_LOCAL_VARS) {
+        const cur = queue.shift();
+        const kCur = `${cur.x}_${cur.y}`;
+        const consIdxs = cellToConstraints.get(kCur) || [];
+        for (let idx of consIdxs) {
+          if (!constraintIndexSet.has(idx)) {
+            constraintIndexSet.add(idx);
+          }
+          const cons = constraints[idx];
+          for (let n of cons.neighbors) {
+            if (variableList.length >= MAX_LOCAL_VARS) break;
+            if (!n.open && !n.flag) {
+              addVariableCell(n);
+            }
+          }
+          if (variableList.length >= MAX_LOCAL_VARS) break;
+        }
+      }
+
+      const localConstraints = Array.from(constraintIndexSet).map(i => constraints[i]);
+      if (localConstraints.length === 0) return null;
+
+      const assignment = new Map();
+      let total = 0;
+      let safeCount = 0;
+
+      function backtrack(idx) {
+        if (idx === variableList.length) {
+          // 全変数に値を入れた状態で制約を満たすか確認
+          if (isValidLocal(localConstraints, assignment, variableKeySet)) {
+            total++;
+            if (assignment.get(keyTarget) === STATE.SAFE) {
+              safeCount++;
+            }
+          }
+          return;
+        }
+
+        const v = variableList[idx];
+        const k = `${v.x}_${v.y}`;
+
+        for (let state of [STATE.SAFE, STATE.MINE_NORMAL, STATE.MINE_HEAVY]) {
+          assignment.set(k, state);
+          // 部分割り当ての時点で矛盾していないかチェック（早期 pruning）
+          if (isValidLocal(localConstraints, assignment, variableKeySet)) {
+            backtrack(idx + 1);
+          }
+          assignment.delete(k);
+        }
+      }
+
+      backtrack(0);
+
+      if (total === 0) return null;  // 局所制約だけでは一切整合しない → ここでは諦めて情報なし扱い
+
+      const safeProb = safeCount / total;
+      return { safeProb, mineProb: 1 - safeProb };
+    }
+
+    // メイン：自動ヒント表示
+    window.showHint = function() {
+      if (gameOver) return;
+
+      clearHints();
+
+      const constraints = getConstraints();
+
+      // セル → そのセルが含まれる制約 index の対応を作る
+      const cellToConstraints = new Map();
+      constraints.forEach((cons, idx) => {
+        cons.neighbors.forEach(n => {
+          const k = `${n.x}_${n.y}`;
+          if (!cellToConstraints.has(k)) {
+            cellToConstraints.set(k, []);
+          }
+          cellToConstraints.get(k).push(idx);
+        });
+      });
+
+      let safe100 = 0;
+      let mine100 = 0;
+
+      // 各マスの確率を計算
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const cell = board[y][x];
+          if (cell.open || cell.flag) continue;
+
+          const k = `${x}_${y}`;
+          const prob = computeLocalProbForCell(cell, constraints, cellToConstraints);
+
+          let safeProb, mineProb;
+          let fromLogic = false;
+
+          if (prob) {
+            safeProb = prob.safeProb;
+            mineProb = prob.mineProb;
+            fromLogic = true;
+          } else {
+            // どの数字にも関係しない or 局所制約だけでは何も決まらない
+            safeProb = 0.5;
+            mineProb = 0.5;
+            fromLogic = false;
+          }
+
+          const safeP = safeProb;
+          const mineP = mineProb;
+          const keyText =
+            `安全: ${(safeP * 100).toFixed(1)}% / 地雷: ${(mineP * 100).toFixed(1)}%`;
+
+          if (safeP >= 0.999) {
+            cell.el.classList.add('logic-safe');
+            cell.el.title = '安全確定\n' + keyText;
+            safe100++;
+          } else if (mineP >= 0.999) {
+            cell.el.classList.add('logic-mine');
+            cell.el.title = '地雷確定\n' + keyText;
+            mine100++;
+          } else {
+            cell.el.classList.add('logic-prob');
+            cell.el.textContent = `${Math.round(safeP * 100)}%`;
+            cell.el.title = (fromLogic ? '' : '局所情報なし・暫定値\n') + keyText;
+          }
+        }
+      }
+
+      if (safe100 === 0 && mine100 === 0) {
+        statusEl.textContent =
+          '論理的に確定できるマスはありません。\n' +
+          '数字に関係するマスはローカル制約からの安全確率を、\n' +
+          'それ以外のマスは暫定 50% を表示しています。';
+      } else {
+        statusEl.textContent =
+          `論理的に安全確定: ${safe100} マス\n` +
+          `論理的に地雷確定: ${mine100} マス\n` +
+          'その他のマスにはローカル制約からの安全確率を表示しています。';
+      }
+    };
+  })();
+  </script>
+</body>
+</html>
