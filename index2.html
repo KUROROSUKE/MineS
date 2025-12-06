@@ -5,100 +5,276 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ロジック付きマインスイーパ</title>
   <style>
+    :root {
+      --bg: #111827;
+      --card-bg: #1f2933;
+      --accent: #3b82f6;
+      --accent-soft: #1d4ed8;
+      --danger: #ef4444;
+      --flag: #f59e0b;
+      --cell-bg: #111827;
+      --cell-bg-open: #0f172a;
+      --cell-border: #374151;
+      --text-main: #e5e7eb;
+      --text-sub: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      font-family: sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      background: #f0f0f0;
-      padding: 10px;
+      background: radial-gradient(circle at top, #1f2937 0, #020617 55%, #000 100%);
+      color: var(--text-main);
+      padding: 16px;
       user-select: none;
+      min-height: 100vh;
     }
+
     h1 {
       font-size: 24px;
-      margin: 10px 0;
+      margin: 4px 0 8px;
+      letter-spacing: 0.05em;
     }
-    #controls {
+
+    h2 {
+      font-size: 13px;
+      font-weight: 400;
+      margin: 0 0 12px;
+      color: var(--text-sub);
+      line-height: 1.6;
+      text-align: left;
+      max-width: 640px;
+    }
+
+    #shell {
+      background: rgba(15, 23, 42, 0.92);
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      box-shadow:
+        0 20px 45px rgba(15, 23, 42, 0.9),
+        0 0 0 1px rgba(15, 23, 42, 0.8);
+      padding: 16px 16px 20px;
+      max-width: 720px;
+      width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      margin-bottom: 20px;
+      gap: 14px;
     }
+
+    #header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    #title-block {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    #subtitle {
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
     button {
-      padding: 12px 24px;
-      font-size: 18px;
+      padding: 6px 14px;
+      font-size: 13px;
       border: none;
-      border-radius: 5px;
+      border-radius: 999px;
       cursor: pointer;
-      background: #2196f3;
-      color: white;
+      background: radial-gradient(circle at top left, var(--accent) 0, var(--accent-soft) 50%, #1e293b 100%);
+      color: #e5e7eb;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow:
+        0 0 0 1px rgba(59, 130, 246, 0.2),
+        0 6px 16px rgba(15, 23, 42, 0.9);
+      transition: transform 0.1s ease, box-shadow 0.1s ease, filter 0.1s ease;
+      white-space: nowrap;
     }
-    button.flag-mode {
-      background: #ff9800;
+
+    button span {
+      font-size: 15px;
     }
+
+    button:hover {
+      filter: brightness(1.05);
+      transform: translateY(-1px);
+      box-shadow:
+        0 0 0 1px rgba(59, 130, 246, 0.3),
+        0 10px 24px rgba(15, 23, 42, 0.95);
+    }
+
+    button:active {
+      transform: translateY(0);
+      box-shadow:
+        0 0 0 1px rgba(59, 130, 246, 0.4),
+        0 4px 12px rgba(15, 23, 42, 0.9);
+    }
+
+    #info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-sub);
+      flex-wrap: wrap;
+    }
+
+    #status {
+      flex: 1;
+      min-height: 1.4em;
+      white-space: pre-line;
+    }
+
+    #timer {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #board-shell {
+      background: radial-gradient(circle at top, #020617 0, #020617 55%, #000 100%);
+      border-radius: 14px;
+      padding: 10px;
+      border: 1px solid rgba(31, 41, 55, 0.9);
+      box-shadow:
+        inset 0 0 24px rgba(15, 23, 42, 0.9),
+        0 10px 35px rgba(0, 0, 0, 1);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
     #board {
       display: grid;
-      gap: 2px;
-      background: #999;
-      border-radius: 4px;
+      gap: 1px;
+      background: #020617;
+      border-radius: 10px;
       overflow: hidden;
       touch-action: manipulation;
     }
+
     .cell {
-      background: #ccc;
+      background: var(--cell-bg);
+      border-radius: 4px;
+      border: 1px solid var(--cell-border);
       width: 100%;
       height: 100%;
       box-sizing: border-box;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 16px;
-      font-weight: bold;
+      font-size: 12px;
+      font-weight: 600;
       cursor: pointer;
-    }
-    .cell.open {
-      background: #eee;
-      cursor: default;
-    }
-    .cell.mine {
-      background: #e91e63;
-      color: #fff;
-    }
-    .cell.flag {
-      background: #ffc107;
-    }
-    .timer {
-      margin-top: 10px;
-      font-weight: bold;
+      color: var(--text-main);
+      transition: background 0.08s ease, transform 0.08s ease, box-shadow 0.08s ease, border-color 0.08s ease;
     }
 
-    /* ヒント表示用 */
-    .cell.logic-safe {
-      box-shadow: 0 0 0 3px #4caf50 inset; /* 緑枠：安全確定 or 安全候補 */
+    .cell:hover {
+      background: #020617;
+      transform: translateY(-0.5px);
+      box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.4);
     }
+
+    .cell.open {
+      background: var(--cell-bg-open);
+      cursor: default;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .cell.open:hover {
+      box-shadow: none;
+      transform: none;
+    }
+
+    .cell.mine {
+      background: radial-gradient(circle at top, #f97373 0, var(--danger) 60%, #7f1d1d 100%);
+      color: #fee2e2;
+      border-color: #b91c1c;
+      box-shadow: 0 0 10px rgba(239, 68, 68, 0.8);
+    }
+
+    .cell.flag {
+      background: radial-gradient(circle at top, #fed7aa 0, var(--flag) 55%, #78350f 100%);
+      color: #1f2933;
+      border-color: #b45309;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    }
+
+    .cell.logic-safe {
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.8);
+      border-color: rgba(34, 197, 94, 0.6);
+    }
+
     .cell.logic-mine {
-      box-shadow: 0 0 0 3px #f44336 inset; /* 赤枠：地雷確定 */
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.9);
+      border-color: rgba(239, 68, 68, 0.8);
+    }
+
+    @media (max-width: 640px) {
+      #shell {
+        padding: 12px;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      h2 {
+        font-size: 12px;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>ロジック付きマインスイーパ</h1>
-  <h2>
-    ・一部の爆弾は「重爆弾」で、周囲に 2 個分として数え上げられる。<br>
-    ・表示される数字は、本来の合計から 1 少ないことがある（ただし 1 未満にはならない）。<br>
-    ・ヒントは「数字だけ」を使って、0/1/2 の全パターンを深さ制限付きで総当たりします。<br>
-    ・何も確定しないときは、安全そうな上位 3 マスを表示します。
-  </h2>
+  <div id="shell">
+    <div id="header">
+      <div id="title-block">
+        <h1>ロジック付きマインスイーパ</h1>
+        <div id="subtitle">
+          ・一部の爆弾は「重爆弾」で、周囲に 2 個分として数え上げられる。<br>
+          ・表示される数字は、本来の合計から 1 少ないことがある（ただし 1 未満にはならない）。<br>
+          ・数字マスだけを使って、0/1/2 の全パターンを深さ制限付きで総当たりして推論。
+        </div>
+      </div>
+      <div id="controls">
+        <button id="flagButton">
+          <span>🚩</span> 旗モード
+        </button>
+        <button id="resetButton">
+          <span>🔄</span> リセット
+        </button>
+      </div>
+    </div>
 
-  <div id="controls">
-    <button id="flagButton">🚩 旗モード OFF</button>
-    <button id="resetButton">🔄 リセット</button>
-    <button id="autoLogicButton">🤖 ロジック自動操作 OFF</button>
+    <div id="info-row">
+      <div id="status"></div>
+      <div id="timer">時間: 0</div>
+    </div>
+
+    <div id="board-shell">
+      <div id="board"></div>
+    </div>
   </div>
-  <div id="status"></div>
-  <div id="board"></div>
-  <div id="timer" class="timer">時間: 0</div>
 
   <!-- ゲーム本体 -->
   <script>
@@ -107,7 +283,6 @@
     const flagButton  = document.getElementById('flagButton');
     const resetButton = document.getElementById('resetButton');
     const timerEl   = document.getElementById('timer');
-    const autoLogicButton = document.getElementById('autoLogicButton');
 
     const size = 20;
     const mineCount = 100;          // 爆弾の個数（重爆も 1 個としてカウント）
@@ -120,26 +295,23 @@
     let timer;
     let timerSeconds = 0;
     let firstClick  = null;
-    let autoLogic = false;
 
     flagButton.addEventListener('click', () => {
       flagMode = !flagMode;
-      flagButton.textContent = flagMode ? '🚩 旗モード ON' : '🚩 旗モード OFF';
-      flagButton.classList.toggle('flag-mode', flagMode);
+      if (flagMode) {
+        flagButton.style.background =
+          "radial-gradient(circle at top left, #f59e0b 0, #d97706 50%, #1e293b 100%)";
+        flagButton.style.boxShadow =
+          "0 0 0 1px rgba(245, 158, 11, 0.35), 0 10px 24px rgba(15, 23, 42, 0.95)";
+      } else {
+        flagButton.style.background =
+          "radial-gradient(circle at top left, #3b82f6 0, #1d4ed8 50%, #1e293b 100%)";
+        flagButton.style.boxShadow =
+          "0 0 0 1px rgba(59, 130, 246, 0.25), 0 6px 16px rgba(15, 23, 42, 0.9)";
+      }
     });
 
     resetButton.addEventListener('click', init);
-
-    autoLogicButton.addEventListener('click', () => {
-      autoLogic = !autoLogic;
-      autoLogicButton.textContent = autoLogic
-        ? '🤖 ロジック自動操作 ON'
-        : '🤖 ロジック自動操作 OFF';
-      // 状態が変わったときに一度だけヒントを更新
-      if (autoLogic && typeof requestHint === 'function' && !gameOver) {
-        requestHint();
-      }
-    });
 
     function requestHint() {
       if (typeof showHint === 'function' && !gameOver) {
@@ -164,9 +336,11 @@
         }
       }, 1000);
 
-      const shortSide = Math.min(window.innerWidth, window.innerHeight) * 0.9;
-      boardEl.style.width  = `${shortSide}px`;
-      boardEl.style.height = `${shortSide}px`;
+      // ボードサイズ決定
+      const maxBoardPx = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+      const boardSizePx = Math.min(maxBoardPx, 560);
+      boardEl.style.width  = `${boardSizePx}px`;
+      boardEl.style.height = `${boardSizePx}px`;
       boardEl.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
       boardEl.style.gridTemplateRows    = `repeat(${size}, 1fr)`;
 
@@ -195,6 +369,13 @@
       }
 
       if (typeof clearHints === 'function') clearHints();
+
+      // 旗モード初期スタイル
+      flagMode = false;
+      flagButton.style.background =
+        "radial-gradient(circle at top left, #3b82f6 0, #1d4ed8 50%, #1e293b 100%)";
+      flagButton.style.boxShadow =
+        "0 0 0 1px rgba(59, 130, 246, 0.25), 0 6px 16px rgba(15, 23, 42, 0.9)";
     }
 
     function handleCellClick(cell) {
@@ -304,6 +485,8 @@
         }
         cell.el.textContent = displayCount;
         cell.el.style.color = getNumberColor(displayCount);
+      } else {
+        cell.el.textContent = '';
       }
 
       if (openedCount === size * size - mineCount) {
@@ -313,15 +496,15 @@
 
     function getNumberColor(n) {
       switch (n) {
-        case 1: return '#1976d2';
-        case 2: return '#388e3c';
-        case 3: return '#d32f2f';
-        case 4: return '#7b1fa2';
-        case 5: return '#f57c00';
-        case 6: return '#00796b';
-        case 7: return '#000000';
-        case 8: return '#7b1fa2';
-        default: return '#000000';
+        case 1: return '#60a5fa';
+        case 2: return '#22c55e';
+        case 3: return '#f97316';
+        case 4: return '#a855f7';
+        case 5: return '#ec4899';
+        case 6: return '#06b6d4';
+        case 7: return '#e5e7eb';
+        case 8: return '#9ca3af';
+        default: return '#e5e7eb';
       }
     }
 
@@ -348,7 +531,7 @@
       gameOver = true;
       clearInterval(timer);
       if (win) {
-        statusEl.textContent = `🎉 勝利！ 時間: ${timerSeconds}秒`;
+        statusEl.textContent = `🎉 クリア！ 時間: ${timerSeconds}秒`;
       } else {
         statusEl.textContent = `💥 ゲームオーバー`;
         for (let y = 0; y < size; y++) {
@@ -369,10 +552,8 @@
   <!-- ロジックソルバー：数字だけから {0,1,2} の可能集合を絞る＋上位3安全マス -->
   <script>
   (function() {
-    // 何回「制約伝播」を回すか（大きくすると少しだけ強くなるが、その分だけ重くなる）
     const MAX_PROP_ITER = 10;
 
-    // ヒントのクリア
     window.clearHints = function() {
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
@@ -386,7 +567,6 @@
       }
     };
 
-    // 数字マス（open & 表示あり & >0）から制約リストを作る
     function getConstraints() {
       const constraints = [];
       for (let y = 0; y < size; y++) {
@@ -413,7 +593,6 @@
       return constraints;
     }
 
-    // 制約から各マスの「0/1/2 の可能これくしょん」を作る
     function buildDomain(constraints) {
       const domain = [];
       for (let y = 0; y < size; y++) {
@@ -421,49 +600,30 @@
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
           if (c.open) {
-            // 既に開いているマスは 0 固定
-            domain[y][x] = [true, false, false];
+            domain[y][x] = [true, false, false]; // 0固定
           } else if (c.flag) {
-            // 旗が立っているマスはとりあえず 1 or 2 の可能性があるものとする
-            domain[y][x] = [false, true, true];
+            domain[y][x] = [false, true, true];  // 1 or 2
           } else {
-            // まだ未知のマス：0/1/2 すべてありうる
-            domain[y][x] = [true, true, true];
+            domain[y][x] = [true, true, true];   // 0/1/2 すべて
           }
         }
       }
 
-      // 制約伝播
       for (let iter = 0; iter < MAX_PROP_ITER; iter++) {
         let changed = false;
         for (const cons of constraints) {
           const { display, neighbors } = cons;
           const unknownNeighbors = neighbors.filter(c => !c.open);
-
-          // 既に開いていて、かつ地雷ではないマスは0確定なので制約には関与しない
-          // （ただしここでは neighbors は「周囲マス」なので、open でも count>0 かもしれないが
-          //   地雷ではないことが確定しているので 0 扱い）
-
-          // unknownNeighbors について、ドメインの合計が display を実現できるかどうかをチェック
           const len = unknownNeighbors.length;
           if (len === 0) continue;
+          if (len > 8) continue; // 組合せ爆発防止
 
-          // 簡易に「あり得る 0/1/2 の組み合わせ」を全部回す（深さ制限付き）
-          // ただし len が大きすぎると組合せ爆発するので、ある程度で打ち切る
-          if (len > 8) continue; // 適当な打ち切り
-
-          // 各未知マスのドメインを参照
-          const domList = unknownNeighbors.map(c => {
-            const d = domain[c.y][c.x];
-            return d;
-          });
-
-          const allowed = [false, false, false]; // 0/1/2 のどれかが「まだどこかで使えるか」
+          const domList = unknownNeighbors.map(c => domain[c.y][c.x]);
+          const allowed = [false, false, false];
 
           function dfs(idx, sum) {
             if (idx === len) {
               if (sum === display) {
-                // この組み合わせは有効
                 for (let i = 0; i < len; i++) {
                   const d = domList[i];
                   for (let v = 0; v <= 2; v++) {
@@ -476,7 +636,6 @@
             const d = domList[idx];
             for (let v = 0; v <= 2; v++) {
               if (!d[v]) continue;
-              // 合計が display を明らかに超えたり、残りマスをフルに使っても display に届かないなら枝刈り
               const maxRest = (len - idx - 1) * 2;
               if (sum + v > display) continue;
               if (sum + v + maxRest < display) continue;
@@ -486,8 +645,6 @@
 
           dfs(0, 0);
 
-          // allowed がすべて false になる場合は、「この制約だけでは矛盾」というだけなので、
-          // ここではドメインを壊さない
           if (!allowed[0] && !allowed[1] && !allowed[2]) {
             continue;
           }
@@ -509,7 +666,6 @@
       return domain;
     }
 
-    // ドメインから「安全確定 / 地雷確定」と「ざっくり安全確率」を求める
     function analyzeDomain(domain) {
       const safeKeys = [];
       const mineKeys = [];
@@ -527,14 +683,12 @@
           for (let v = 0; v <= 2; v++) if (dom[v]) possible.push(v);
 
           if (possible.length === 0) {
-            // 矛盾しているだけなので、とりあえず 1/3 としておく
             safeProbMap.set(key, 1/3);
             continue;
           }
 
-          // 安全確定 / 地雷確定
           const only0   = (possible.length === 1 && possible[0] === 0);
-          const no0     = !dom[0] && (dom[1] || dom[2]); // 1 or 2 のみ
+          const no0     = !dom[0] && (dom[1] || dom[2]);
 
           if (only0) {
             safeKeys.push(key);
@@ -542,7 +696,6 @@
             mineKeys.push(key);
           }
 
-          // 簡易な安全確率：ドメインを一様分布とみなす
           let mineVals = 0;
           for (const v of possible) if (v > 0) mineVals++;
           const safeProb = 1 - mineVals / possible.length;
@@ -553,7 +706,7 @@
       return { safeKeys, mineKeys, safeProbMap };
     }
 
-    // メイン：自動ヒント表示
+    // メイン：毎手ごとに呼ばれて、自動で「確定マスを開ける／旗を立てる」
     window.showHint = function() {
       if (gameOver) return;
 
@@ -561,78 +714,45 @@
 
       const constraints = getConstraints();
       if (constraints.length === 0) {
-        statusEl.textContent = 'まだ数字が開いていないので、何も推論できません。';
+        statusEl.textContent = 'まだ数字がほとんど開いていないので、推論できません。';
         return;
       }
 
       const domain = buildDomain(constraints);
       const { safeKeys, mineKeys, safeProbMap } = analyzeDomain(domain);
 
-      let safeCount = 0;
-      let mineCount = 0;
+      let openedByLogic = 0;
+      let flaggedByLogic = 0;
 
-      // 自動ロジックモードのときは、確定マスを実際に開けたり旗を立てたりする
-      if (autoLogic) {
-        let openedByLogic = 0;
-        let flaggedByLogic = 0;
-
-        for (const key of safeKeys) {
-          const [xStr, yStr] = key.split('_');
-          const x = Number(xStr), y = Number(yStr);
-          const c = board[y][x];
-          if (!c.open && !c.flag && !gameOver) {
-            openCell(c);
-            if (!gameOver && c.count === 0) {
-              openSurrounding(x, y);
-            }
-            openedByLogic++;
-          }
-        }
-
-        for (const key of mineKeys) {
-          const [xStr, yStr] = key.split('_');
-          const x = Number(xStr), y = Number(yStr);
-          const c = board[y][x];
-          if (!c.open && !c.flag && !gameOver) {
-            c.flag = true;
-            c.el.classList.add('flag');
-            c.el.textContent = '🚩';
-            flaggedByLogic++;
-          }
-        }
-
-        if (openedByLogic === 0 && flaggedByLogic === 0) {
-          statusEl.textContent =
-            '自動ロジック：今のところ、論理的に確定するマスはありません。';
-        } else {
-          statusEl.textContent =
-            `自動ロジック：安全マス ${openedByLogic} マスを開き、` +
-            `地雷確定マス ${flaggedByLogic} マスに旗を立てました。`;
-        }
-
-        // ハイライトは使わないので、そのまま終了
-        return;
-      }
-
+      // 安全確定マスは自動で開く
       for (const key of safeKeys) {
         const [xStr, yStr] = key.split('_');
         const x = Number(xStr), y = Number(yStr);
         const c = board[y][x];
-        c.el.classList.add('logic-safe');
-        c.el.title = '論理的に安全が確定しています';
-        safeCount++;
+        if (!c.open && !c.flag && !gameOver && !c.mine) {
+          openCell(c);
+          if (!gameOver && c.count === 0) {
+            openSurrounding(x, y);
+          }
+          openedByLogic++;
+        }
       }
+
+      // 地雷確定マスには自動で旗を立てる
       for (const key of mineKeys) {
         const [xStr, yStr] = key.split('_');
         const x = Number(xStr), y = Number(yStr);
         const c = board[y][x];
-        c.el.classList.add('logic-mine');
-        c.el.title = '論理的に地雷が確定しています（普通 or 重爆）';
-        mineCount++;
+        if (!c.open && !c.flag && !gameOver) {
+          c.flag = true;
+          c.el.classList.add('flag');
+          c.el.textContent = '🚩';
+          flaggedByLogic++;
+        }
       }
 
-      // 一つも確定しなかったら、安全そうな上位3マスを表示
-      if (safeCount === 0 && mineCount === 0) {
+      // 何も確定しない場合は、安全そうな候補を 3 マスだけ見た目で教える
+      if (openedByLogic === 0 && flaggedByLogic === 0) {
         const candidates = [];
         for (let y = 0; y < size; y++) {
           for (let x = 0; x < size; x++) {
@@ -656,17 +776,15 @@
         }
 
         statusEl.textContent =
-          '制約を ' + MAX_PROP_ITER + ' 回伝播しましたが、\n' +
-          '論理的に 100% 安全 / 100% 地雷になるマスはありませんでした。\n' +
-          '安全そうな候補 上位3マスを表示しています。';
+          '論理的に 100% 確定するマスはなし。\n' +
+          '安全候補の上位 3 マスを目印だけ表示しています。';
       } else {
         statusEl.textContent =
-          `論理的に安全確定: ${safeCount} マス\n` +
-          `論理的に地雷確定: ${mineCount} マス`;
+          `自動ロジック: 安全マス ${openedByLogic} マスを開き、` +
+          `地雷確定マス ${flaggedByLogic} マスに旗を立てました。`;
       }
     };
   })();
   </script>
-
 </body>
 </html>
