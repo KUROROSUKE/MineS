@@ -195,6 +195,9 @@
     function handleCellClick(cell) {
       if (gameOver || cell.open) return;
 
+      // ★ 旗が置いてあるところは押せない
+      if (cell.flag) return;
+
       // 最初のクリックで地雷配置（そのマスと周囲3x3を安全に）
       if (!firstClick) {
         firstClick = { x: cell.x, y: cell.y };
@@ -288,7 +291,7 @@
       openedCount++;
       cell.el.classList.add('open');
 
-      // 開いたセル上のフラグは消す
+      // 開いたセル上のフラグは消す（保険）
       if (cell.flag) {
         cell.flag = false;
         cell.flagType = null;
@@ -482,7 +485,6 @@
       const components = [];
       for (let i = 0; i < F; i++) {
         if (visited[i]) continue;
-        // その変数がどの制約にも出てこない場合も一応成分として扱う
         const queue = [i];
         visited[i] = true;
         const comp = [];
@@ -527,17 +529,14 @@
         const numVars = comp.length;
         const numCons = compConstraints.length;
 
-        // 変数が多すぎると計算が爆発するので、上限を設ける（例: 15）
+        // 変数が多すぎる成分は諦める（爆発防止）
         if (numVars > 15) {
-          // この成分は諦めてヒントなし
           continue;
         }
 
-        // 各制約ごとの現在の合計と未割当の数
         const consSum = Array(numCons).fill(0);
         const consRemain = compConstraints.map(c => c.vars.length);
 
-        // 変数 -> 制約のインデックス一覧
         const varCons = Array.from({ length: numVars }, () => []);
         for (let ci = 0; ci < numCons; ci++) {
           const vs = compConstraints[ci].vars;
@@ -572,11 +571,9 @@
             return;
           }
 
-          // この変数に 0,1,2 を入れてみる
           for (const val of [0, 1, 2]) {
             assign[pos] = val;
             let pruned = false;
-            // 関わる制約を更新して枝刈り
             const touched = varCons[pos];
             for (const ci of touched) {
               consSum[ci] += val;
@@ -586,7 +583,6 @@
               const minTotal = consSum[ci];
               const maxTotal = consSum[ci] + consRemain[ci] * 2;
 
-              // allowedSums のどれかが [minTotal, maxTotal] に入っていれば OK
               let okRange = false;
               for (const a of allowed) {
                 if (a >= minTotal && a <= maxTotal) {
@@ -603,7 +599,6 @@
               dfsVar(pos + 1);
             }
 
-            // 巻き戻し
             for (const ci of touched) {
               consSum[ci] -= val;
               consRemain[ci]++;
@@ -618,11 +613,10 @@
           continue;
         }
 
-        // この成分内の変数の可能値集合を varPossible に反映
         for (let li = 0; li < numVars; li++) {
           const gid = comp[li];
           const pset = compPossible[li];
-          if (pset.size === 0) continue; // あり得ないが一応
+          if (pset.size === 0) continue;
           varPossible[gid] = pset;
         }
       }
@@ -636,7 +630,7 @@
         const has1 = poss.has(1);
         const has2 = poss.has(2);
 
-        if (!has0 && !has1 && !has2) continue; // 何も情報がない
+        if (!has0 && !has1 && !has2) continue;
 
         // 常に0 → 安全確定
         if (!has1 && !has2) {
@@ -646,8 +640,8 @@
         // 0 があり得ない（1 or 2 のみ） → 地雷確定
         if (!has0) {
           let type = "unknown";
-          if (has1 && !has2) type = "normal";    // 1 でしかあり得ない
-          else if (!has1 && has2) type = "heavy"; // 2 でしかあり得ない
+          if (has1 && !has2) type = "normal";
+          else if (!has1 && has2) type = "heavy";
           markMine(cell, type);
         }
       }
