@@ -201,7 +201,6 @@
         placeMines();
       }
 
-      // 自動フラグが立っていても開くのは禁止しない（ユーザーの判断に任せるならここで return してもよい）
       openCell(cell);
 
       if (cell.mine) {
@@ -373,157 +372,12 @@
           c.hintStatus = null;
           c.el.classList.remove('hint-safe', 'hint-mine');
 
-          // 自動フラグも一旦全部クリア（開いているセルの数字は残す）
+          // 自動フラグも一旦全部クリア（開いているセルの数字はそのまま）
           if (!c.open) {
             c.flag = false;
             c.flagType = null;
             c.el.classList.remove('flag');
             c.el.textContent = '';
-          }
-        }
-      }
-    }
-
-    // displayCount と「1小さい可能性」を考慮した SAT っぽい推論
-    // ・閉じている各マスについて allowed set を {0,1,2} からスタート
-    // ・各数字マスごとの制約でどんどん削る（intersection）
-    function updateHints() {
-      clearHintsAndFlags();
-      if (!firstClick) return; // まだ何も見えていない
-
-      // globalPoss[y][x] = そのマスが {0,1,2} のどれになりうるか
-      const globalPoss = [];
-      for (let y = 0; y < size; y++) {
-        globalPoss[y] = [];
-        for (let x = 0; x < size; x++) {
-          const cell = board[y][x];
-          if (!cell.open) {
-            globalPoss[y][x] = new Set([0, 1, 2]);
-          } else {
-            globalPoss[y][x] = new Set([0]);
-          }
-        }
-      }
-
-      // 各開いている数字マスごとにローカル制約を計算し globalPoss を絞る
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const cell = board[y][x];
-          if (!cell.open) continue;
-
-          const d = (cell.displayCount != null) ? cell.displayCount : 0;
-          // 0 は「周囲の合計が0」なので、隣接セルはすべて 0
-          if (d === 0) {
-            const neighbors = getNeighbors(x, y);
-            for (const n of neighbors) {
-              if (!n.open) {
-                const s = globalPoss[n.y][n.x];
-                s.delete(1);
-                s.delete(2);
-              }
-            }
-            continue;
-          }
-
-          // d >= 1 の場合、実際の合計 S は d または d+1
-          const allowedSums = [d, d + 1];
-
-          const neighbors = getNeighbors(x, y);
-          const domains = [];
-          const indexMap = []; // neighbors内のインデックスを覚えておく
-          for (let i = 0; i < neighbors.length; i++) {
-            const n = neighbors[i];
-            indexMap.push({ x: n.x, y: n.y });
-            if (n.open) {
-              domains.push([0]); // 開いているマスは必ず 0
-            } else {
-              // 今までの制約で既に削られている globalPoss を使う
-              const poss = globalPoss[n.y][n.x];
-              const dom = [];
-              if (poss.has(0)) dom.push(0);
-              if (poss.has(1)) dom.push(1);
-              if (poss.has(2)) dom.push(2);
-              domains.push(dom);
-            }
-          }
-
-          // この数字マスに対して許される assignment を全列挙
-          const localPossible = Array(neighbors.length)
-            .fill(0)
-            .map(() => new Set());
-          let hasSolution = false;
-          const current = new Array(neighbors.length).fill(0);
-          const maxAllowedSum = Math.max(...allowedSums);
-
-          function dfs(idx, sum) {
-            if (sum > maxAllowedSum) return;
-
-            if (idx === neighbors.length) {
-              if (allowedSums.includes(sum)) {
-                hasSolution = true;
-                for (let k = 0; k < neighbors.length; k++) {
-                  localPossible[k].add(current[k]);
-                }
-              }
-              return;
-            }
-
-            const dom = domains[idx];
-            for (const v of dom) {
-              current[idx] = v;
-              dfs(idx + 1, sum + v);
-            }
-          }
-
-          dfs(0, 0);
-
-          if (!hasSolution) {
-            // この数字＋現在の制約が矛盾している → この数字からは新しい情報を出さない
-            continue;
-          }
-
-          // globalPoss と localPossible の intersection を取る
-          for (let i = 0; i < neighbors.length; i++) {
-            const n = neighbors[i];
-            if (n.open) continue;
-            const gp = globalPoss[n.y][n.x];
-            const lp = localPossible[i];
-
-            // gp ∩ lp に更新
-            for (const v of [0, 1, 2]) {
-              if (gp.has(v) && !lp.has(v)) {
-                gp.delete(v);
-              }
-            }
-          }
-        }
-      }
-
-      // globalPoss を元に安全／地雷＋自動フラグを付ける
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const cell = board[y][x];
-          if (cell.open) continue;
-          const poss = globalPoss[y][x];
-
-          const has0 = poss.has(0);
-          const has1 = poss.has(1);
-          const has2 = poss.has(2);
-
-          // あり得る値がひとつもない（矛盾）なら何もしない
-          if (!has0 && !has1 && !has2) continue;
-
-          // 常に0 → 安全確定
-          if (!has1 && !has2) {
-            markSafe(cell);
-          }
-
-          // 0 はあり得ず、1 or 2 のみ → 地雷確定
-          if (!has0) {
-            let type = "unknown";
-            if (has1 && !has2) type = "normal";   // 1 でしかあり得ない
-            else if (!has1 && has2) type = "heavy"; // 2 でしかあり得ない
-            markMine(cell, type);
           }
         }
       }
@@ -544,6 +398,261 @@
       return res;
     }
 
+    // displayCount と「1小さい可能性」を考慮したグローバル推論
+    // - 未オープンで数字に隣接しているマスを変数として {0,1,2} を割り当てる
+    // - 各数字マス： sum(近傍変数) ∈ {d, d+1}（d==0なら {0}）
+    // - すべての制約を満たす全パターンを列挙し、各セルの値の集合を集計
+    function updateHints() {
+      clearHintsAndFlags();
+      if (!firstClick) return; // まだ何も見えていない
+
+      // 1. フロンティア（未オープンかつ数字に隣接しているマス）を抽出
+      const idMap = Array.from({ length: size }, () =>
+        Array(size).fill(-1)
+      );
+      const frontier = [];
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const cell = board[y][x];
+          if (cell.open) continue;
+          const neighbors = getNeighbors(x, y);
+          let hasOpenNumber = false;
+          for (const n of neighbors) {
+            if (n.open && n.displayCount != null) {
+              hasOpenNumber = true;
+              break;
+            }
+          }
+          if (hasOpenNumber) {
+            idMap[y][x] = frontier.length;
+            frontier.push(cell);
+          }
+        }
+      }
+
+      const F = frontier.length;
+      if (F === 0) return;
+
+      // 2. 数字マスから制約を構成
+      const constraints = [];
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const cell = board[y][x];
+          if (!cell.open) continue;
+
+          const d = (cell.displayCount != null) ? cell.displayCount : 0;
+          const neighbors = getNeighbors(x, y);
+          const vars = [];
+          for (const n of neighbors) {
+            if (!n.open) {
+              const vid = idMap[n.y][n.x];
+              if (vid !== -1) vars.push(vid);
+            }
+          }
+          if (vars.length === 0) continue;
+
+          let allowedSums;
+          if (d === 0) {
+            allowedSums = [0];
+          } else {
+            allowedSums = [d, d + 1];
+          }
+          constraints.push({ vars, allowedSums });
+        }
+      }
+
+      if (constraints.length === 0) return;
+
+      // 3. 変数グラフを作って連結成分ごとに分割
+      const adj = Array.from({ length: F }, () => []);
+      for (const c of constraints) {
+        const vs = c.vars;
+        for (let i = 0; i < vs.length; i++) {
+          for (let j = i + 1; j < vs.length; j++) {
+            const a = vs[i];
+            const b = vs[j];
+            adj[a].push(b);
+            adj[b].push(a);
+          }
+        }
+      }
+
+      const visited = Array(F).fill(false);
+      const components = [];
+      for (let i = 0; i < F; i++) {
+        if (visited[i]) continue;
+        // その変数がどの制約にも出てこない場合も一応成分として扱う
+        const queue = [i];
+        visited[i] = true;
+        const comp = [];
+        while (queue.length > 0) {
+          const v = queue.shift();
+          comp.push(v);
+          for (const nb of adj[v]) {
+            if (!visited[nb]) {
+              visited[nb] = true;
+              queue.push(nb);
+            }
+          }
+        }
+        components.push(comp);
+      }
+
+      // 各変数の「取りうる値の集合」を初期化
+      const varPossible = Array.from({ length: F }, () => new Set([0, 1, 2]));
+
+      // 4. 各成分ごとに SAT して varPossible を詰める
+      for (const comp of components) {
+        const compSet = new Set(comp);
+        const compIndexMap = new Map(); // global id -> local index
+        comp.forEach((gid, idx) => compIndexMap.set(gid, idx));
+
+        // この成分に関係する制約だけ抜き出し
+        const compConstraints = [];
+        for (const c of constraints) {
+          const localVars = [];
+          for (const vid of c.vars) {
+            if (compSet.has(vid)) {
+              localVars.push(compIndexMap.get(vid));
+            }
+          }
+          if (localVars.length === 0) continue;
+          compConstraints.push({
+            vars: localVars,             // local indices
+            allowedSums: c.allowedSums   // そのまま
+          });
+        }
+
+        const numVars = comp.length;
+        const numCons = compConstraints.length;
+
+        // 変数が多すぎると計算が爆発するので、上限を設ける（例: 15）
+        if (numVars > 15) {
+          // この成分は諦めてヒントなし
+          continue;
+        }
+
+        // 各制約ごとの現在の合計と未割当の数
+        const consSum = Array(numCons).fill(0);
+        const consRemain = compConstraints.map(c => c.vars.length);
+
+        // 変数 -> 制約のインデックス一覧
+        const varCons = Array.from({ length: numVars }, () => []);
+        for (let ci = 0; ci < numCons; ci++) {
+          const vs = compConstraints[ci].vars;
+          for (const v of vs) {
+            varCons[v].push(ci);
+          }
+        }
+
+        const compPossible = Array.from({ length: numVars }, () => new Set());
+        const assign = Array(numVars).fill(0);
+        let hasSolution = false;
+
+        function dfsVar(pos) {
+          if (pos === numVars) {
+            // 全変数割り当て後、全制約がちょうど allowedSums を満たすか確認
+            for (let ci = 0; ci < numCons; ci++) {
+              const s = consSum[ci];
+              const allowed = compConstraints[ci].allowedSums;
+              let ok = false;
+              for (const a of allowed) {
+                if (s === a) {
+                  ok = true;
+                  break;
+                }
+              }
+              if (!ok) return;
+            }
+            hasSolution = true;
+            for (let v = 0; v < numVars; v++) {
+              compPossible[v].add(assign[v]);
+            }
+            return;
+          }
+
+          // この変数に 0,1,2 を入れてみる
+          for (const val of [0, 1, 2]) {
+            assign[pos] = val;
+            let pruned = false;
+            // 関わる制約を更新して枝刈り
+            const touched = varCons[pos];
+            for (const ci of touched) {
+              consSum[ci] += val;
+              consRemain[ci]--;
+
+              const allowed = compConstraints[ci].allowedSums;
+              const minTotal = consSum[ci];
+              const maxTotal = consSum[ci] + consRemain[ci] * 2;
+
+              // allowedSums のどれかが [minTotal, maxTotal] に入っていれば OK
+              let okRange = false;
+              for (const a of allowed) {
+                if (a >= minTotal && a <= maxTotal) {
+                  okRange = true;
+                  break;
+                }
+              }
+              if (!okRange) {
+                pruned = true;
+              }
+            }
+
+            if (!pruned) {
+              dfsVar(pos + 1);
+            }
+
+            // 巻き戻し
+            for (const ci of touched) {
+              consSum[ci] -= val;
+              consRemain[ci]++;
+            }
+          }
+        }
+
+        dfsVar(0);
+
+        if (!hasSolution) {
+          // この成分自体が矛盾している → 今回は何も絞らない
+          continue;
+        }
+
+        // この成分内の変数の可能値集合を varPossible に反映
+        for (let li = 0; li < numVars; li++) {
+          const gid = comp[li];
+          const pset = compPossible[li];
+          if (pset.size === 0) continue; // あり得ないが一応
+          varPossible[gid] = pset;
+        }
+      }
+
+      // 5. varPossible を元に安全／地雷＋自動フラグを付ける
+      for (let i = 0; i < F; i++) {
+        const cell = frontier[i];
+        const poss = varPossible[i];
+
+        const has0 = poss.has(0);
+        const has1 = poss.has(1);
+        const has2 = poss.has(2);
+
+        if (!has0 && !has1 && !has2) continue; // 何も情報がない
+
+        // 常に0 → 安全確定
+        if (!has1 && !has2) {
+          markSafe(cell);
+        }
+
+        // 0 があり得ない（1 or 2 のみ） → 地雷確定
+        if (!has0) {
+          let type = "unknown";
+          if (has1 && !has2) type = "normal";    // 1 でしかあり得ない
+          else if (!has1 && has2) type = "heavy"; // 2 でしかあり得ない
+          markMine(cell, type);
+        }
+      }
+    }
+
     function markSafe(cell) {
       if (cell.hintStatus === "mine") return;
       cell.hintStatus = "safe";
@@ -554,7 +663,7 @@
       cell.hintStatus = "mine";
       cell.el.classList.add('hint-mine');
 
-      // 自動フラグ付与
+      // 自動フラグ付与（わからない／1／2）
       cell.flag = true;
       cell.flagType = mineType;
       cell.el.classList.add('flag');
