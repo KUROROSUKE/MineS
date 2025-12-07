@@ -19,79 +19,82 @@
       font-size: 24px;
       margin: 10px 0;
     }
+    h2 {
+      font-size: 14px;
+      margin: 5px 0 15px;
+      text-align: center;
+      line-height: 1.6;
+    }
     #controls {
+      margin-bottom: 10px;
       display: flex;
-      flex-direction: column;
       gap: 10px;
-      margin-bottom: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
     }
     button {
-      padding: 12px 24px;
-      font-size: 18px;
-      border: none;
-      border-radius: 5px;
+      padding: 8px 16px;
+      font-size: 16px;
       cursor: pointer;
-      background: #2196f3;
+      border: none;
+      border-radius: 4px;
+      background: #1976d2;
       color: white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    button.flag-mode {
-      background: #ff9800;
+    button:hover {
+      background: #1565c0;
     }
     #status {
-      font-size: 18px;
+      min-height: 24px;
+      margin-bottom: 8px;
       font-weight: bold;
-      margin-top: 10px;
-      text-align: center;
-      white-space: pre-line;
+      font-size: 18px;
     }
     #board {
       display: grid;
-      gap: 2px;
-      box-sizing: border-box;
-      margin: 0 auto;
-      transition: all 0.2s ease-in-out;
+      background: #bdbdbd;
+      border: 2px solid #9e9e9e;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      touch-action: manipulation;
     }
     .cell {
-      background: #bbb;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      border: 1px solid #9e9e9e;
+      background: #e0e0e0;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 16px;
+      font-size: 18px;
       font-weight: bold;
-      color: #333;
-      border-radius: 3px;
       cursor: pointer;
-      transition: background-color 0.2s, box-shadow 0.2s;
-      aspect-ratio: 1 / 1;
-      user-select: none;
+      transition: background 0.1s, box-shadow 0.1s;
     }
     .cell.open {
-      background: #e0e0e0;
+      background: #eeeeee;
+      border-color: #bdbdbd;
+      cursor: default;
     }
     .cell.flag {
-      background: #ffeb3b;
-      color: #d32f2f;
+      background: #fff9c4;
     }
     .cell.mine {
-      background: #f44336;
-      color: white;
+      background: #ff5252;
+      color: #ffffff;
     }
     .timer {
-      font-size: 20px;
-      font-weight: bold;
-      margin-top: 10px;
+      margin-top: 8px;
+      font-size: 18px;
     }
 
-    /* ▼ ヒント表示用の装飾 ▼ */
-    .cell.logic-safe {
-      box-shadow: 0 0 0 3px #4caf50 inset; /* 緑枠：安全確定 */
+    /* ヒント用枠 */
+    .cell.hint-safe {
+      box-shadow: 0 0 0 2px #4caf50 inset; /* 安全: 緑枠 */
     }
-    .cell.logic-mine {
-      box-shadow: 0 0 0 3px #f44336 inset; /* 赤枠：地雷確定 */
-    }
-    .cell.logic-prob {
-      box-shadow: 0 0 0 2px #9e9e9e inset; /* グレー枠：確率表示 */
-      font-size: 11px;
+    .cell.hint-mine {
+      box-shadow: 0 0 0 2px #f44336 inset; /* 地雷確定: 赤枠 */
     }
 
     @media (max-width: 600px) {
@@ -110,8 +113,10 @@
 </head>
 <body>
   <h1>マインスイーパ</h1>
-  <h2>1マスで爆弾2個分カウントの重爆弾が紛れ込んでいる。<br>また、本来より1少なく表示される場合がある。（最小値1）</h2>
-
+  <h2>
+    1マスで爆弾2個分カウントの重爆弾が紛れ込んでいる。<br>
+    また、本来より1少なく表示される場合がある。（最小値1）
+  </h2>
   <div id="controls">
     <button id="flagButton">🚩 旗モード OFF</button>
     <button id="resetButton">🔄 リセット</button>
@@ -120,7 +125,6 @@
   <div id="board"></div>
   <div id="timer" class="timer">時間: 0</div>
 
-  <!-- ゲーム本体 -->
   <script>
     const boardEl = document.getElementById('board');
     const statusEl = document.getElementById('status');
@@ -128,30 +132,27 @@
     const resetButton = document.getElementById('resetButton');
     const timerEl = document.getElementById('timer');
 
+    // 基礎設定
     const size = 20;
     const mineCount = 100;
     const DECEPTION_PROBABILITY = 0.5; // 50%で表示数値を-1（ただし最小1）
+
     let gameOver = false;
     let flagMode = false;
     let openedCount = 0;
     let board = [];
-    let timer;
+    let timer = null;
     let timerSeconds = 0;
-    let firstClick = null;
+    let firstClick = null; // 最初のクリック位置（周囲を安全にするため）
 
     flagButton.addEventListener('click', () => {
       flagMode = !flagMode;
-      flagButton.textContent = flagMode ? '🚩 旗モード ON' : '🚩 旗モード OFF';
-      flagButton.classList.toggle('flag-mode', flagMode);
+      flagButton.textContent = flagMode
+        ? '🚩 旗モード ON'
+        : '🚩 旗モード OFF';
     });
 
     resetButton.addEventListener('click', init);
-
-    function requestHint() {
-      if (typeof showHint === 'function' && !gameOver) {
-        showHint();
-      }
-    }
 
     function init() {
       board = [];
@@ -188,10 +189,13 @@
           const cell = {
             x,
             y,
-            mine: null, // null / "normal" / "heavy"
+            mine: null,            // null / "normal" / "heavy"
             open: false,
-            flag: false,
+            flag: false,           // フラグが立っているか
+            flagType: null,        // null / "unknown" / "normal" / "heavy"
             count: 0,
+            hintStatus: null,      // null / "safe" / "mine"
+            mineTypeHint: null,    // null / "normal" / "heavy"
             el: cellEl
           };
           board[y][x] = cell;
@@ -200,29 +204,25 @@
         }
       }
 
-      if (typeof clearHints === 'function') clearHints();
+      clearHints();
     }
 
     function handleCellClick(cell) {
-      if (gameOver) return;
+      if (gameOver || cell.open) return;
 
-      // 旗モード時
+      // 旗モード：フラグ状態を循環
       if (flagMode) {
         if (!cell.open) {
-          if (typeof clearHints === 'function') clearHints();
-          cell.flag = !cell.flag;
-          cell.el.classList.toggle('flag', cell.flag);
-          cell.el.textContent = cell.flag ? '🚩' : '';
-          requestHint();
+          cycleFlag(cell);
+          updateHints(); // フラグ情報を使って再推論
         }
         return;
       }
 
-      // 通常クリック
-      if (cell.open || cell.flag) return;
-      if (typeof clearHints === 'function') clearHints();
+      // フラグが立っているマスは開かない
+      if (cell.flag) return;
 
-      // 初クリックで地雷配置
+      // 最初のクリックで地雷配置（そのマスと周囲3x3は安全）
       if (!firstClick) {
         firstClick = { x: cell.x, y: cell.y };
         placeMines();
@@ -230,6 +230,7 @@
 
       openCell(cell);
 
+      // 地雷を踏んだ
       if (cell.mine) {
         cell.el.classList.add('mine');
         cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
@@ -237,23 +238,52 @@
         return;
       }
 
+      // 周囲にカウントがないなら連鎖で開く
       if (cell.count === 0) {
         openSurrounding(cell.x, cell.y);
       }
 
+      // ヒント更新
+      updateHints();
+
+      // クリア判定
       if (openedCount === size * size - mineCount) {
         endGame(true);
-        return;
       }
+    }
 
-      requestHint();
+    // フラグ状態を循環: なし → 不明 → 1 → 2 → なし
+    function cycleFlag(cell) {
+      if (!cell.flag) {
+        // なし → 不明
+        cell.flag = true;
+        cell.flagType = "unknown";
+        cell.el.classList.add('flag');
+        cell.el.textContent = '🚩?';
+      } else if (cell.flagType === "unknown") {
+        // 不明 → 1カウント地雷候補
+        cell.flagType = "normal";
+        cell.el.classList.add('flag');
+        cell.el.textContent = '1';
+      } else if (cell.flagType === "normal") {
+        // 1 → 2カウント地雷候補
+        cell.flagType = "heavy";
+        cell.el.classList.add('flag');
+        cell.el.textContent = '2';
+      } else {
+        // 2 → なし
+        cell.flag = false;
+        cell.flagType = null;
+        cell.el.classList.remove('flag');
+        cell.el.textContent = '';
+      }
     }
 
     function placeMines() {
       let mines = 0;
       const safeCells = new Set();
 
-      // 初手とその周囲は安全
+      // 最初にクリックしたマスとその周囲3x3は地雷禁止
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const nx = firstClick.x + dx;
@@ -264,6 +294,7 @@
         }
       }
 
+      // 重爆弾（2カウント地雷）の数をランダムで決める
       const heavyMineCount = Math.floor(Math.random() * (mineCount + 1));
       let heavyMines = 0;
 
@@ -271,6 +302,7 @@
         const x = Math.floor(Math.random() * size);
         const y = Math.floor(Math.random() * size);
         const cell = board[y][x];
+
         if (!cell.mine && !safeCells.has(`${x},${y}`)) {
           if (heavyMines < heavyMineCount) {
             cell.mine = "heavy";
@@ -282,11 +314,12 @@
         }
       }
 
-      // 本当の合計カウント（重爆弾は2カウント）
+      // 各マスのカウント計算（重爆弾は2カウント）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-          if (board[y][x].mine) continue;
-          board[y][x].count = getMineCount(x, y);
+          const cell = board[y][x];
+          if (cell.mine) continue;
+          cell.count = getMineCount(x, y);
         }
       }
     }
@@ -297,23 +330,31 @@
         for (let dx = -1; dx <= 1; dx++) {
           const nx = x + dx;
           const ny = y + dy;
-          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
-            const mineType = board[ny][nx].mine;
-            if (mineType === "normal") count += 1;
-            else if (mineType === "heavy") count += 2;
-          }
+          if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+          if (dx === 0 && dy === 0) continue;
+          const neighbor = board[ny][nx];
+          if (neighbor.mine === "normal") count += 1;
+          else if (neighbor.mine === "heavy") count += 2;
         }
       }
       return count;
     }
 
     function openCell(cell) {
-      if (cell.open) return;
+      if (cell.open || gameOver) return;
       cell.open = true;
       openedCount++;
       cell.el.classList.add('open');
 
-      if (cell.count > 0) {
+      // 開いたときはフラグは消してしまう（通常はフラグ付きマスは開かないので保険）
+      if (cell.flag) {
+        cell.flag = false;
+        cell.flagType = null;
+        cell.el.classList.remove('flag');
+      }
+
+      if (cell.count > 0 && !cell.mine) {
+        // 欺瞞システム：一定確率で表示数値を1減らす（ただし最小1）
         let displayCount = cell.count;
         if (Math.random() < DECEPTION_PROBABILITY) {
           displayCount = Math.max(1, cell.count - 1);
@@ -321,22 +362,19 @@
         cell.el.textContent = displayCount;
         cell.el.style.color = getNumberColor(displayCount);
       }
-
-      if (openedCount === size * size - mineCount) {
-        endGame(true);
-      }
     }
 
+    // 数字に応じて色付け
     function getNumberColor(num) {
       switch (num) {
-        case 1: return '#1976d2';
-        case 2: return '#388e3c';
-        case 3: return '#d32f2f';
-        case 4: return '#512da8';
-        case 5: return '#ffa000';
-        case 6: return '#00796b';
-        case 7: return '#000000';
-        case 8: return '#7b1fa2';
+        case 1: return '#1976d2'; // 青
+        case 2: return '#388e3c'; // 緑
+        case 3: return '#d32f2f'; // 赤
+        case 4: return '#7b1fa2'; // 紫
+        case 5: return '#f57c00'; // オレンジ
+        case 6: return '#00897b'; // ティール
+        case 7: return '#616161'; // グレー
+        case 8: return '#000000'; // 黒
         default: return '#000000';
       }
     }
@@ -344,16 +382,15 @@
     function openSurrounding(x, y) {
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;
           const nx = x + dx;
           const ny = y + dy;
-          if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
-            const neighbor = board[ny][nx];
-            if (!neighbor.open && !neighbor.mine && !neighbor.flag) {
-              openCell(neighbor);
-              if (neighbor.count === 0) {
-                openSurrounding(nx, ny);
-              }
+          if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+          if (dx === 0 && dy === 0) continue;
+          const neighbor = board[ny][nx];
+          if (!neighbor.open && !neighbor.mine) {
+            openCell(neighbor);
+            if (neighbor.count === 0) {
+              openSurrounding(nx, ny);
             }
           }
         }
@@ -363,423 +400,118 @@
     function endGame(win) {
       gameOver = true;
       clearInterval(timer);
-      if (win) {
-        statusEl.textContent = `🎉 勝利！ 時間: ${timerSeconds}秒`;
-      } else {
-        statusEl.textContent = `💥 ゲームオーバー`;
-        for (let y = 0; y < size; y++) {
-          for (let x = 0; x < size; x++) {
-            const cell = board[y][x];
-            if (cell.mine && !cell.open) {
-              cell.el.classList.add('mine');
-              cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
-            }
-          }
-        }
-      }
-    }
+      statusEl.textContent = win ? 'クリア！' : 'ゲームオーバー';
 
-    init();
-  </script>
-
-  <!-- ヒントソルバー（論理 + 確率） -->
-  <script>
-  (function() {
-    const MAX_DEPTH = 13;
-    const STATE = { SAFE: 0, MINE_NORMAL: 1, MINE_HEAVY: 2 };
-
-    // ヒントのクリア
-    window.clearHints = function() {
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const c = board[y][x];
-          c.el.classList.remove('logic-safe', 'logic-mine', 'logic-prob');
-          c.el.title = '';
-          if (!c.open && !c.flag) {
-            c.el.textContent = '';
-          }
-        }
-      }
-    };
-
-    // 各数字マス単位で「論理的に確定するセル」を求める
-    function findForcedCells() {
-      const mustMine = new Set();
-      const mustSafe = new Set();
-
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const c = board[y][x];
-          if (!c.open) continue;
-          if (c.el.textContent === '') continue;
-
-          const d = parseInt(c.el.textContent);
-          if (isNaN(d) || d <= 0) continue;
-
-          const unknowns = [];
-          let flagMin = 0;
-          let flagMax = 0;
-
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              if (dx === 0 && dy === 0) continue;
-              const nx = x + dx, ny = y + dy;
-              if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-              const n = board[ny][nx];
-
-              if (n.open) continue;
-
-              if (n.flag) {
-                // 旗は必ず地雷（1〜2）
-                flagMin += 1;
-                flagMax += 2;
-              } else {
-                unknowns.push(n);
-              }
-            }
-          }
-
-          const k = unknowns.length;
-          if (k === 0) continue;
-
-          const safePossible = new Array(k).fill(false);
-          const minePossible = new Array(k).fill(false);
-          const vals = new Array(k).fill(0);
-
-          function dfs(idx, sumU) {
-            if (idx === k) {
-              const minS = flagMin + sumU;
-              const maxS = flagMax + sumU;
-              const S1 = d;
-              const S2 = d + 1; // 欺瞞で +1 まであり得る
-
-              const ok =
-                (S1 >= minS && S1 <= maxS) ||
-                (S2 >= minS && S2 <= maxS);
-
-              if (!ok) return;
-
-              for (let j = 0; j < k; j++) {
-                const v = vals[j];
-                if (v === 0) safePossible[j] = true;
-                else minePossible[j] = true;
-              }
-              return;
-            }
-
-            for (let v = 0; v <= 2; v++) { // 0 / 1 / 2
-              vals[idx] = v;
-              dfs(idx + 1, sumU + v);
-            }
-          }
-
-          dfs(0, 0);
-
-          for (let j = 0; j < k; j++) {
-            const key = `${unknowns[j].x}_${unknowns[j].y}`;
-            const sOK = safePossible[j];
-            const mOK = minePossible[j];
-
-            if (sOK && !mOK) {
-              mustSafe.add(key);   // 地雷は論理的に不可能
-            } else if (!sOK && mOK) {
-              mustMine.add(key);   // 安全は論理的に不可能
-            }
-          }
-        }
-      }
-      return { mustMine, mustSafe };
-    }
-
-    // 盤面全体をクラスタに分けて確率解析（論理で決まらない部分用）
-    function analyzeBoard() {
-      const frontier = getFrontierCells();
-      if (frontier.length === 0) return [];
-
-      const probabilityMap = {};
-      frontier.forEach(c => {
-        probabilityMap[`${c.x}_${c.y}`] = { safe: 0, total: 0 };
-      });
-
-      const constraints = getConstraints();
-      const clusters = clusterByConstraints(frontier, constraints);
-
-      for (let cluster of clusters) {
-        let targetCells = cluster;
-        if (cluster.length > MAX_DEPTH) {
-          targetCells = cluster.slice(0, MAX_DEPTH);
-        }
-        solveCluster(targetCells, constraints, probabilityMap);
-      }
-
-      const results = [];
-      for (let key in probabilityMap) {
-        const data = probabilityMap[key];
-        if (data.total > 0) {
-          const [x, y] = key.split('_').map(Number);
-          const safeProb = data.safe / data.total;
-          const mineProb = 1 - safeProb;
-          results.push({ x, y, safeProb, mineProb });
-        }
-      }
-      return results;
-    }
-
-    function getFrontierCells() {
-      const list = [];
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const c = board[y][x];
-          if (!c.open && !c.flag) {
-            let hasOpenNeighbor = false;
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx, ny = y + dy;
-                if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
-                  if (board[ny][nx].open) {
-                    hasOpenNeighbor = true;
-                    break;
-                  }
-                }
-              }
-              if (hasOpenNeighbor) break;
-            }
-            if (hasOpenNeighbor) list.push(c);
-          }
-        }
-      }
-      return list;
-    }
-
-    function getConstraints() {
-      const list = [];
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const c = board[y][x];
-          if (c.open && c.el.textContent !== '') {
-            const d = parseInt(c.el.textContent);
-            if (isNaN(d) || d <= 0) continue;
-
-            const neighbors = [];
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                if (dx === 0 && dy === 0) continue;
-                const nx = x + dx, ny = y + dy;
-                if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-                  neighbors.push(board[ny][nx]);
-                }
-              }
-            }
-            list.push({ x, y, display: d, neighbors });
-          }
-        }
-      }
-      return list;
-    }
-
-    function clusterByConstraints(frontierCells, constraints) {
-      const cellToConstraints = new Map();
-      frontierCells.forEach(c => cellToConstraints.set(c, []));
-
-      constraints.forEach((cons, idx) => {
-        cons.neighbors.forEach(n => {
-          if (cellToConstraints.has(n)) {
-            cellToConstraints.get(n).push(idx);
-          }
-        });
-      });
-
-      const visited = new Set();
-      const clusters = [];
-
-      for (let cell of frontierCells) {
-        if (visited.has(cell)) continue;
-
-        const cluster = [];
-        const queue = [cell];
-        visited.add(cell);
-
-        while (queue.length > 0) {
-          const curr = queue.shift();
-          cluster.push(curr);
-
-          const consIndices = cellToConstraints.get(curr) || [];
-          for (let cIdx of consIndices) {
-            const cons = constraints[cIdx];
-            for (let neighbor of cons.neighbors) {
-              if (frontierCells.includes(neighbor) && !visited.has(neighbor)) {
-                visited.add(neighbor);
-                queue.push(neighbor);
-              }
-            }
-          }
-          if (cluster.length >= MAX_DEPTH + 5) break;
-        }
-        clusters.push(cluster);
-      }
-      return clusters;
-    }
-
-    function solveCluster(cells, constraints, probMap) {
-      const relevantConstraints = constraints.filter(c =>
-        c.neighbors.some(n => cells.includes(n))
-      );
-
-      const assignment = new Map();
-
-      function backtrack(index) {
-        if (index === cells.length) {
-          cells.forEach(c => {
-            const k = `${c.x}_${c.y}`;
-            probMap[k].total++;
-            if (assignment.get(k) === STATE.SAFE) {
-              probMap[k].safe++;
-            }
-          });
-          return;
-        }
-
-        const cell = cells[index];
-        const key = `${cell.x}_${cell.y}`;
-
-        for (let state of [STATE.SAFE, STATE.MINE_NORMAL, STATE.MINE_HEAVY]) {
-          assignment.set(key, state);
-          if (isValid(relevantConstraints, assignment)) {
-            backtrack(index + 1);
-          }
-        }
-        assignment.delete(key);
-      }
-
-      backtrack(0);
-    }
-
-    // display または display+1 が取り得るかを、現状割当でチェック
-    function isValid(constraints, assignment) {
-      for (let c of constraints) {
-        let currentSum = 0;
-        let unknownCount = 0;
-        let flagMin = 0;
-        let flagMax = 0;
-
-        for (let n of c.neighbors) {
-          if (n.open) continue;
-
-          if (n.flag) {
-            flagMin += 1;
-            flagMax += 2;
-            continue;
-          }
-
-          const k = `${n.x}_${n.y}`;
-          if (assignment.has(k)) {
-            currentSum += assignment.get(k); // 0 / 1 / 2
-          } else {
-            unknownCount++;
-          }
-        }
-
-        const d = c.display;
-        if (isNaN(d)) continue;
-
-        const minTotal = currentSum + flagMin;
-        const maxTotal = currentSum + flagMax + unknownCount * 2;
-
-        // 真の合計 S は display または display+1
-        if (maxTotal < d) return false;
-        if (minTotal > d + 1) return false;
-      }
-      return true;
-    }
-
-    // メイン：自動ヒント表示
-    window.showHint = function() {
-      if (gameOver) return;
-
-      clearHints();
-
-      // ① 各数字マス単位の完全論理推論
-      const { mustMine, mustSafe } = findForcedCells();
-
-      // ② それでも決まらない部分だけ確率解析
-      const localMoves = analyzeBoard();
-      const moveMap = new Map();
-      for (const m of localMoves) {
-        moveMap.set(`${m.x}_${m.y}`, m);
-      }
-
-      let forcedSafeCount = mustSafe.size;
-      let forcedMineCount = mustMine.size;
-
-      const probSafe100 = localMoves.filter(m => m.safeProb >= 0.999);
-      const probMine100 = localMoves.filter(m => m.mineProb >= 0.999);
-
-      // 計算上 100% になったものもカウント
-      forcedSafeCount += probSafe100.length;
-      forcedMineCount += probMine100.length;
-
-      if (forcedSafeCount === 0 && forcedMineCount === 0) {
-        statusEl.textContent =
-          '論理的に確定できるマスはありません。\n' +
-          '一部のマスには近傍の制約からの安全確率を表示します。';
-      } else {
-        statusEl.textContent =
-          `論理的に安全確定: ${mustSafe.size} マス\n` +
-          `論理的に地雷確定: ${mustMine.size} マス\n` +
-          'そのほかのマスには近傍の制約からの安全確率を表示します。';
-      }
-
-      // ③ 盤面全体にヒントを反映
+      // 地雷を全て表示
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
-          if (cell.open || cell.flag) continue;
-
-          const key = `${x}_${y}`;
-          const prob = moveMap.get(key);
-
-          let safeProb, mineProb;
-          let fromLogic = false;
-
-          if (mustMine.has(key)) {
-            safeProb = 0;
-            mineProb = 1;
-            fromLogic = true;
-          } else if (mustSafe.has(key)) {
-            safeProb = 1;
-            mineProb = 0;
-            fromLogic = true;
-          } else if (prob) {
-            safeProb = prob.safeProb;
-            mineProb = prob.mineProb;
-            fromLogic = true;
-          } else {
-            // 数字から何の制約も受けていない領域：何も分からないので暫定 50%
-            safeProb = 0.5;
-            mineProb = 0.5;
-            fromLogic = false;
-          }
-
-          const safeP = safeProb;
-          const mineP = mineProb;
-          const keyText =
-            `安全: ${(safeP * 100).toFixed(1)}% / 地雷: ${(mineP * 100).toFixed(1)}%`;
-
-          if (safeP >= 0.999) {
-            cell.el.classList.add('logic-safe');
-            cell.el.title = '安全確定\n' + keyText;
-          } else if (mineP >= 0.999) {
-            cell.el.classList.add('logic-mine');
-            cell.el.title = '地雷確定\n' + keyText;
-          } else {
-            cell.el.classList.add('logic-prob');
-            cell.el.textContent = `${Math.round(safeP * 100)}%`;
-            cell.el.title = (fromLogic ? '' : '局所情報なし・暫定値\n') + keyText;
+          if (cell.mine && !cell.open) {
+            cell.el.classList.add('mine');
+            cell.el.textContent = cell.mine === "heavy" ? '💥' : '💣';
           }
         }
       }
-    };
-  })();
+    }
+
+    // ---------- ヒント関連ロジック ----------
+
+    function clearHints() {
+      for (let y = 0; y < size; y++) {
+        if (!board[y]) continue;
+        for (let x = 0; x < size; x++) {
+          const c = board[y][x];
+          if (!c) continue;
+          c.hintStatus = null;
+          c.mineTypeHint = null;
+          c.el.classList.remove('hint-safe', 'hint-mine');
+        }
+      }
+    }
+
+    // 単一の数字マスからのローカル推論
+    // ・フラグ情報（不明 / 1 / 2）を利用
+    // ・残りユニット0 → 周囲の未確定マスは安全
+    // ・残りユニット1 or 2 かつ 未確定マス1つ → そのマスは地雷確定（1 or 2 も確定）
+    function updateHints() {
+      clearHints();
+      if (!firstClick) return; // まだ地雷が配置されていない
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const cell = board[y][x];
+          // 開いていて、地雷でなく、数字マスのみ対象
+          if (!cell.open || cell.mine || cell.count <= 0) continue;
+
+          const neighbors = [];
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx >= 0 && ny >= 0 && nx < size && ny < size) {
+                neighbors.push(board[ny][nx]);
+              }
+            }
+          }
+
+          let flaggedNormal = 0;
+          let flaggedHeavy = 0;
+          let flaggedUnknown = 0;
+          const unopened = [];
+
+          for (const n of neighbors) {
+            if (n.flag) {
+              if (n.flagType === "normal") flaggedNormal++;
+              else if (n.flagType === "heavy") flaggedHeavy++;
+              else flaggedUnknown++; // "unknown"
+            } else if (!n.open) {
+              unopened.push(n);
+            }
+          }
+
+          const usedMin = flaggedNormal + 2 * flaggedHeavy + flaggedUnknown;
+          const remainMin = cell.count - usedMin;
+
+          // ルールA: 残り0ユニット → 未フラグ未オープンは全部安全
+          if (remainMin === 0) {
+            for (const n of unopened) {
+              markSafe(n);
+            }
+          }
+
+          // ルールB: 残りユニット>0 かつ 候補が1マスのみ → そのマスは地雷確定
+          if (remainMin > 0 && unopened.length === 1 && remainMin <= 2) {
+            const target = unopened[0];
+            const type = remainMin === 1 ? "normal" : "heavy";
+            markMine(target, type);
+          }
+        }
+      }
+    }
+
+    function markSafe(cell) {
+      // 既に「地雷確定ヒント」が付いていたら上書きしない
+      if (cell.hintStatus === "mine") return;
+      cell.hintStatus = "safe";
+      cell.el.classList.add('hint-safe');
+    }
+
+    function markMine(cell, mineType) {
+      cell.hintStatus = "mine";
+      cell.mineTypeHint = mineType;
+      cell.el.classList.add('hint-mine');
+
+      // 既にフラグが立っていて種別不明なら、種別を補完して表示を更新
+      if (cell.flag && (!cell.flagType || cell.flagType === "unknown")) {
+        cell.flagType = mineType;
+        cell.el.classList.add('flag');
+        cell.el.textContent = (mineType === "heavy") ? '2' : '1';
+      }
+    }
+
+    // 初期化開始
+    init();
   </script>
 </body>
 </html>
