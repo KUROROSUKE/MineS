@@ -183,12 +183,12 @@
           const cell = {
             x,
             y,
-            mine: null,           // null / "normal" / "heavy"（内部用。推論では使わない）
+            mine: null,           // null / "normal" / "heavy"（内部用）
             open: false,
             flag: false,          // 自動フラグ
             flagType: null,       // null / "unknown" / "normal" / "heavy"
             count: 0,             // 真のカウント（内部用）
-            displayCount: null,   // 画面上の数字（欺瞞込み）※推論はこれだけ使用
+            displayCount: null,   // 画面上の数字（欺瞞込み）※推論ではこれだけ使用
             hintStatus: null,     // null / "safe" / "mine"
             el: cellEl
           };
@@ -199,14 +199,13 @@
       }
 
       clearHintsAndFlags();
-      updateHints(); // スタート時にも一応呼ぶ（最初はランダム候補だけ出す）
+      // スタート時は情報ゼロなので「一番安全」は定義できない ⇒ 何も出さない
+      updateHints();
     }
 
     function handleCellClick(cell) {
       if (gameOver || cell.open) return;
-
-      // 旗が置いてあるところは押せない
-      if (cell.flag) return;
+      if (cell.flag) return; // 旗が置いてあるところは押せない
 
       // 最初のクリックで地雷配置（そのマスと周囲3x3を安全に）
       if (!firstClick) {
@@ -227,7 +226,7 @@
         openSurrounding(cell.x, cell.y);
       }
 
-      // クリック後の状態で推論（安全オート開けまで含めて）
+      // 操作後の状態で推論
       updateHints();
 
       if (openedCount === size * size - mineCount) {
@@ -250,7 +249,7 @@
         }
       }
 
-      // 重爆弾(2カウント)の数をランダムに決定
+      // 重爆弾(2カウント)の数をランダムに決定（ゲーム内部用）
       const heavyMineCount = Math.floor(Math.random() * (mineCount + 1));
       let heavyMines = 0;
 
@@ -445,21 +444,8 @@
       clearHintsAndFlags();
       if (gameOver) return;
 
-      // スタート前：盤面全体からランダムに1マスを「最安全候補」として出す
-      if (!firstClick) {
-        const unopened = [];
-        for (let y = 0; y < size; y++) {
-          for (let x = 0; x < size; x++) {
-            const cell = board[y][x];
-            if (!cell.open) unopened.push(cell);
-          }
-        }
-        if (unopened.length > 0) {
-          const pick = unopened[Math.floor(Math.random() * unopened.length)];
-          markBestCells([pick]);
-        }
-        return;
-      }
+      // スタート前：情報がないので「一番安全」は定義しない
+      if (!firstClick) return;
 
       // ===== 1. 全マスの初期 domain を用意 =====
       const poss = [];
@@ -569,9 +555,7 @@
         if (!changed) break;
       }
 
-      // ===== 3. フロンティアを変数化して、局所 SAT を掛ける =====
-
-      // 3-1. フロンティア（数字に隣接している未オープンマス）
+      // ===== 3. フロンティアを変数化して局所 SAT を掛ける（確率も計算） =====
       const idMap = Array.from({ length: size }, () =>
         Array(size).fill(-1)
       );
@@ -597,95 +581,37 @@
       }
 
       const F = frontier.length;
-      if (F === 0) {
-        // フロンティアがない場合は、単純に未オープンの中からランダム候補
-        const unopened = [];
+
+      // 制約構築
+      const constraints = [];
+      if (F > 0) {
         for (let y = 0; y < size; y++) {
           for (let x = 0; x < size; x++) {
             const cell = board[y][x];
-            if (!cell.open && !cell.flag) unopened.push(cell);
-          }
-        }
-        if (unopened.length > 0) {
-          const pick = unopened[Math.floor(Math.random() * unopened.length)];
-          markBestCells([pick]);
-        }
-        return;
-      }
+            if (!cell.open) continue;
 
-      // 3-2. 数字マスからグローバル制約を構成
-      const constraints = [];
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const cell = board[y][x];
-          if (!cell.open) continue;
-
-          const d = (cell.displayCount != null) ? cell.displayCount : 0;
-          const neighbors = getNeighbors(x, y);
-          const vars = [];
-          for (const n of neighbors) {
-            if (!n.open) {
-              const vid = idMap[n.y][n.x];
-              if (vid !== -1) vars.push(vid);
+            const d = (cell.displayCount != null) ? cell.displayCount : 0;
+            const neighbors = getNeighbors(x, y);
+            const vars = [];
+            for (const n of neighbors) {
+              if (!n.open) {
+                const vid = idMap[n.y][n.x];
+                if (vid !== -1) vars.push(vid);
+              }
             }
-          }
-          if (vars.length === 0) continue;
+            if (vars.length === 0) continue;
 
-          let allowedSums;
-          if (d === 0) {
-            allowedSums = [0];
-          } else {
-            allowedSums = [d, d + 1];
-          }
-          constraints.push({ vars, allowedSums });
-        }
-      }
-
-      if (constraints.length === 0) {
-        // 制約がないならフロンティアの中からランダム候補
-        const candidates = frontier.filter(c => !c.flag);
-        if (candidates.length > 0) {
-          const pick = candidates[Math.floor(Math.random() * candidates.length)];
-          markBestCells([pick]);
-        }
-        return;
-      }
-
-      // 3-3. 変数グラフを作って連結成分ごとに分割
-      const adj = Array.from({ length: F }, () => []);
-      for (const c of constraints) {
-        const vs = c.vars;
-        for (let i = 0; i < vs.length; i++) {
-          for (let j = i + 1; j < vs.length; j++) {
-            const a = vs[i];
-            const b = vs[j];
-            adj[a].push(b);
-            adj[b].push(a);
-          }
-        }
-      }
-
-      const visited = Array(F).fill(false);
-      const components = [];
-      for (let i = 0; i < F; i++) {
-        if (visited[i]) continue;
-        const queue = [i];
-        visited[i] = true;
-        const comp = [];
-        while (queue.length > 0) {
-          const v = queue.shift();
-          comp.push(v);
-          for (const nb of adj[v]) {
-            if (!visited[nb]) {
-              visited[nb] = true;
-              queue.push(nb);
+            let allowedSums;
+            if (d === 0) {
+              allowedSums = [0];
+            } else {
+              allowedSums = [d, d + 1];
             }
+            constraints.push({ vars, allowedSums });
           }
         }
-        components.push(comp);
       }
 
-      // 3-4. 各変数の取りうる値の集合（グローバル）を poss から初期化
       const varPossible = Array.from({ length: F }, (_, i) => {
         const c = frontier[i];
         const s = poss[c.y][c.x];
@@ -696,162 +622,182 @@
         return ns;
       });
 
-      // 3-5. 各変数の「地雷確率」（0〜1、null は不明）
       const varRisk = Array(F).fill(null);
+      const MAX_VARS_SAT = 18;
 
-      const MAX_VARS_SAT = 18; // これより大きい成分には SAT を掛けず、local 伝播のみ
-
-      for (const comp of components) {
-        const compSet = new Set(comp);
-        const compIndexMap = new Map(); // global id -> local index
-        comp.forEach((gid, idx) => compIndexMap.set(gid, idx));
-
-        const compConstraints = [];
+      if (F > 0 && constraints.length > 0) {
+        const adj = Array.from({ length: F }, () => []);
         for (const c of constraints) {
-          const localVars = [];
-          for (const vid of c.vars) {
-            if (compSet.has(vid)) {
-              localVars.push(compIndexMap.get(vid));
+          const vs = c.vars;
+          for (let i = 0; i < vs.length; i++) {
+            for (let j = i + 1; j < vs.length; j++) {
+              const a = vs[i];
+              const b = vs[j];
+              adj[a].push(b);
+              adj[b].push(a);
             }
           }
-          if (localVars.length === 0) continue;
-          compConstraints.push({
-            vars: localVars,
-            allowedSums: c.allowedSums
-          });
         }
 
-        const numVars = comp.length;
-        const numCons = compConstraints.length;
-
-        if (numVars === 0 || numCons === 0) continue;
-        if (numVars > MAX_VARS_SAT) {
-          // デカすぎる成分は確率計算は諦める
-          continue;
-        }
-
-        const doms = [];
-        let invalidComponent = false;
-        for (let li = 0; li < numVars; li++) {
-          const gid = comp[li];
-          const s = varPossible[gid];
-          const domArr = [];
-          if (s.has(0)) domArr.push(0);
-          if (s.has(1)) domArr.push(1);
-          if (s.has(2)) domArr.push(2);
-          if (domArr.length === 0) {
-            invalidComponent = true;
-            break;
+        const visited = Array(F).fill(false);
+        const components = [];
+        for (let i = 0; i < F; i++) {
+          if (visited[i]) continue;
+          const queue = [i];
+          visited[i] = true;
+          const comp = [];
+          while (queue.length > 0) {
+            const v = queue.shift();
+            comp.push(v);
+            for (const nb of adj[v]) {
+              if (!visited[nb]) {
+                visited[nb] = true;
+                queue.push(nb);
+              }
+            }
           }
-          doms.push(domArr);
+          components.push(comp);
         }
-        if (invalidComponent) continue;
 
-        const consSum = Array(numCons).fill(0);
-        const consRemain = compConstraints.map(c => c.vars.length);
+        for (const comp of components) {
+          const compSet = new Set(comp);
+          const compIndexMap = new Map();
+          comp.forEach((gid, idx) => compIndexMap.set(gid, idx));
 
-        const varCons = Array.from({ length: numVars }, () => []);
-        for (let ci = 0; ci < numCons; ci++) {
-          const vs = compConstraints[ci].vars;
-          for (const v of vs) {
-            varCons[v].push(ci);
+          const compConstraints = [];
+          for (const c of constraints) {
+            const localVars = [];
+            for (const vid of c.vars) {
+              if (compSet.has(vid)) {
+                localVars.push(compIndexMap.get(vid));
+              }
+            }
+            if (localVars.length === 0) continue;
+            compConstraints.push({
+              vars: localVars,
+              allowedSums: c.allowedSums
+            });
           }
-        }
 
-        const compPossible = Array.from({ length: numVars }, () => new Set());
-        const assign = Array(numVars).fill(0);
-        let hasSolution = false;
+          const numVars = comp.length;
+          const numCons = compConstraints.length;
+          if (numVars === 0 || numCons === 0) continue;
+          if (numVars > MAX_VARS_SAT) continue;
 
-        // 各変数・値ごとの出現回数
-        const freq = Array.from({ length: numVars }, () => [0, 0, 0]);
-        let solutionCount = 0;
+          const doms = [];
+          let invalidComponent = false;
+          for (let li = 0; li < numVars; li++) {
+            const gid = comp[li];
+            const s = varPossible[gid];
+            const domArr = [];
+            if (s.has(0)) domArr.push(0);
+            if (s.has(1)) domArr.push(1);
+            if (s.has(2)) domArr.push(2);
+            if (domArr.length === 0) {
+              invalidComponent = true;
+              break;
+            }
+            doms.push(domArr);
+          }
+          if (invalidComponent) continue;
 
-        function dfsVar(pos) {
-          if (pos === numVars) {
-            // 全変数割り当て後、全制約がちょうど allowedSums を満たすか確認
-            for (let ci = 0; ci < numCons; ci++) {
-              const s = consSum[ci];
-              const allowed = compConstraints[ci].allowedSums;
-              let ok = false;
-              for (const a of allowed) {
-                if (s === a) {
-                  ok = true;
-                  break;
+          const consSum = Array(numCons).fill(0);
+          const consRemain = compConstraints.map(c => c.vars.length);
+
+          const varCons = Array.from({ length: numVars }, () => []);
+          for (let ci = 0; ci < numCons; ci++) {
+            const vs = compConstraints[ci].vars;
+            for (const v of vs) {
+              varCons[v].push(ci);
+            }
+          }
+
+          const compPossible = Array.from({ length: numVars }, () => new Set());
+          const assign = Array(numVars).fill(0);
+          let hasSolution = false;
+
+          const freq = Array.from({ length: numVars }, () => [0, 0, 0]);
+          let solutionCount = 0;
+
+          function dfsVar(pos) {
+            if (pos === numVars) {
+              for (let ci = 0; ci < numCons; ci++) {
+                const s = consSum[ci];
+                const allowed = compConstraints[ci].allowedSums;
+                let ok = false;
+                for (const a of allowed) {
+                  if (s === a) {
+                    ok = true;
+                    break;
+                  }
+                }
+                if (!ok) return;
+              }
+              hasSolution = true;
+              solutionCount++;
+              for (let v = 0; v < numVars; v++) {
+                const val = assign[v];
+                compPossible[v].add(val);
+                freq[v][val]++;
+              }
+              return;
+            }
+
+            const domArr = doms[pos];
+            for (const val of domArr) {
+              assign[pos] = val;
+              let pruned = false;
+              const touched = varCons[pos];
+              for (const ci of touched) {
+                consSum[ci] += val;
+                consRemain[ci]--;
+
+                const allowed = compConstraints[ci].allowedSums;
+                const minTotal = consSum[ci];
+                const maxTotal = consSum[ci] + consRemain[ci] * 2;
+
+                let okRange = false;
+                for (const a of allowed) {
+                  if (a >= minTotal && a <= maxTotal) {
+                    okRange = true;
+                    break;
+                  }
+                }
+                if (!okRange) {
+                  pruned = true;
                 }
               }
-              if (!ok) return;
-            }
-            hasSolution = true;
-            solutionCount++;
-            for (let v = 0; v < numVars; v++) {
-              const val = assign[v];
-              compPossible[v].add(val);
-              freq[v][val]++;
-            }
-            return;
-          }
 
-          const domArr = doms[pos];
-          for (const val of domArr) {
-            assign[pos] = val;
-            let pruned = false;
-            const touched = varCons[pos];
-            for (const ci of touched) {
-              consSum[ci] += val;
-              consRemain[ci]--;
+              if (!pruned) dfsVar(pos + 1);
 
-              const allowed = compConstraints[ci].allowedSums;
-              const minTotal = consSum[ci];
-              const maxTotal = consSum[ci] + consRemain[ci] * 2;
-
-              let okRange = false;
-              for (const a of allowed) {
-                if (a >= minTotal && a <= maxTotal) {
-                  okRange = true;
-                  break;
-                }
-              }
-              if (!okRange) {
-                pruned = true;
+              for (const ci of touched) {
+                consSum[ci] -= val;
+                consRemain[ci]++;
               }
             }
+          }
 
-            if (!pruned) {
-              dfsVar(pos + 1);
-            }
+          dfsVar(0);
 
-            for (const ci of touched) {
-              consSum[ci] -= val;
-              consRemain[ci]++;
-            }
+          if (!hasSolution || solutionCount === 0) continue;
+
+          for (let li = 0; li < numVars; li++) {
+            const gid = comp[li];
+            const pset = compPossible[li];
+            if (pset.size > 0) varPossible[gid] = pset;
+
+            const f = freq[li];
+            const mineCountFreq = f[1] + f[2];
+            const risk = mineCountFreq / solutionCount;
+            varRisk[gid] = risk;
           }
         }
 
-        dfsVar(0);
-
-        if (!hasSolution || solutionCount === 0) {
-          continue;
+        // SAT で絞れた varPossible を poss に反映
+        for (let i = 0; i < F; i++) {
+          const cell = frontier[i];
+          poss[cell.y][cell.x] = varPossible[i];
         }
-
-        // SAT 結果を varPossible と varRisk に反映
-        for (let li = 0; li < numVars; li++) {
-          const gid = comp[li];
-          const pset = compPossible[li];
-          if (pset.size > 0) {
-            varPossible[gid] = pset;
-          }
-
-          const f = freq[li];
-          const mineCountFreq = f[1] + f[2];
-          const risk = mineCountFreq / solutionCount;
-          varRisk[gid] = risk;
-        }
-      }
-
-      // SAT で絞れた varPossible を poss に反映
-      for (let i = 0; i < F; i++) {
-        const cell = frontier[i];
-        poss[cell.y][cell.x] = varPossible[i];
       }
 
       // ===== 4. poss を元に安全／地雷＋自動フラグを付ける =====
@@ -881,7 +827,7 @@
         }
       }
 
-      // ===== 5. 安全確定マスを自動で開く → もし新しく開いたら再推論 =====
+      // ===== 5. 安全確定マスを自動で開く → 新しく開いたら再推論 =====
       const openedBefore = openedCount;
 
       for (let y = 0; y < size; y++) {
@@ -901,46 +847,56 @@
         return;
       }
 
-      // ===== 6. 確定安全がなくなったので、一番安全なマスを提示 =====
-
+      // ===== 6. 確定安全がなくなったので、「一番地雷が少なそうなマス」を出す =====
       let bestRisk = Infinity;
       const bestCells = [];
 
-      // まずフロンティアの中で、0 を取りうるマスだけ確率を参照
-      for (let i = 0; i < F; i++) {
-        const cell = frontier[i];
-        if (cell.open || cell.flag) continue;
-        const s = poss[cell.y][cell.x];
-        if (!s.has(0)) continue; // そもそも安全になり得ないマスは除外
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const cell = board[y][x];
+          if (cell.open || cell.flag) continue;
 
-        const r = varRisk[i];
-        if (r == null) continue; // 確率が計算できていない場合はスキップ
+          const s = poss[y][x];
+          if (!s) continue;
 
-        if (r < bestRisk - 1e-9) {
-          bestRisk = r;
-          bestCells.length = 0;
-          bestCells.push(cell);
-        } else if (Math.abs(r - bestRisk) < 1e-9) {
-          bestCells.push(cell);
+          const has0 = s.has(0);
+          const has1 = s.has(1);
+          const has2 = s.has(2);
+
+          // domain から簡易リスク（0を含まないなら絶対地雷）
+          let domainRisk;
+          if (!has0 && (has1 || has2)) {
+            domainRisk = 1.0;
+          } else if (has0 && !has1 && !has2) {
+            domainRisk = 0.0;
+          } else {
+            // 0,1,2 のうち「地雷値」の種類数 / 総種類数 でざっくり
+            const mineKinds = (has1 ? 1 : 0) + (has2 ? 1 : 0);
+            const totalKinds = (has0 ? 1 : 0) + mineKinds;
+            domainRisk = mineKinds / totalKinds;
+          }
+
+          // フロンティアで SAT による確率があれば、それを優先的に使う
+          let risk = domainRisk;
+          if (F > 0) {
+            const id = idMap[y][x];
+            if (id !== -1 && varRisk[id] != null) {
+              risk = varRisk[id];
+            }
+          }
+
+          if (risk < bestRisk - 1e-9) {
+            bestRisk = risk;
+            bestCells.length = 0;
+            bestCells.push(cell);
+          } else if (Math.abs(risk - bestRisk) < 1e-9) {
+            bestCells.push(cell);
+          }
         }
       }
 
       if (bestCells.length > 0 && bestRisk < Infinity) {
         markBestCells(bestCells);
-        return;
-      }
-
-      // それでも候補がない場合（確率計算できない場合）は、未オープン・非旗マスからランダム
-      const fallback = [];
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const cell = board[y][x];
-          if (!cell.open && !cell.flag) fallback.push(cell);
-        }
-      }
-      if (fallback.length > 0) {
-        const pick = fallback[Math.floor(Math.random() * fallback.length)];
-        markBestCells([pick]);
       }
     }
 
