@@ -871,7 +871,33 @@
         }
       }
 
-      // 6-2 SAT ベースで候補が1つもなければ、フロンティアの domain から簡易リスクで評価
+      // 局所的な数字密度からリスクを計算する関数
+      function localNumberRisk(cell) {
+        const ns = getNeighbors(cell.x, cell.y);
+        let sum = 0;
+        let cnt = 0;
+        for (const numCell of ns) {
+          if (!numCell.open) continue;
+          if (numCell.displayCount == null || numCell.displayCount === 0) continue;
+          const d = numCell.displayCount;
+
+          const around = getNeighbors(numCell.x, numCell.y);
+          let unk = 0;
+          for (const a of around) {
+            if (!a.open) unk++;
+          }
+          if (unk === 0) continue;
+
+          // その数字の「1マスあたり平均爆弾密度」を d / unk とみなす
+          const r = Math.min(1, d / unk);
+          sum += r;
+          cnt++;
+        }
+        if (cnt === 0) return null;
+        return sum / cnt; // 周囲の数字からの平均リスク
+      }
+
+      // 6-2 SAT ベースで候補が1つもなければ、フロンティアの domain + 数字密度から簡易リスクで評価
       if (bestCells.length === 0 && F > 0) {
         bestRisk = Infinity;
         bestCells = [];
@@ -886,7 +912,7 @@
           const has1 = s.has(1);
           const has2 = s.has(2);
 
-          // domain から簡易リスク（0を含まないなら絶対地雷なので除外済み）
+          // domain からの簡易リスク
           let domainRisk;
           if (has0 && !has1 && !has2) {
             domainRisk = 0.0;
@@ -896,10 +922,19 @@
             domainRisk = mineKinds / totalKinds;
           }
 
-          if (domainRisk < bestRisk - 1e-9) {
-            bestRisk = domainRisk;
+          // 周囲の数字からの局所リスク
+          let numRisk = localNumberRisk(cell);
+          if (numRisk == null) {
+            numRisk = domainRisk; // 数字が無いことはフロンティアではほぼ無いが念のため
+          }
+
+          // 両方を混ぜて最終リスクにする（数字密度をやや重視）
+          const combinedRisk = 0.4 * domainRisk + 0.6 * numRisk;
+
+          if (combinedRisk < bestRisk - 1e-9) {
+            bestRisk = combinedRisk;
             bestCells = [cell];
-          } else if (Math.abs(domainRisk - bestRisk) < 1e-9) {
+          } else if (Math.abs(combinedRisk - bestRisk) < 1e-9) {
             bestCells.push(cell);
           }
         }
