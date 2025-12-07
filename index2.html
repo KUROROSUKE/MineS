@@ -83,15 +83,20 @@
       margin-top: 10px;
     }
 
+    /* 安全マス：太くて明るい枠＋背景も少し変える */
     .cell.hint-safe {
       outline: 4px solid #00e676;
       outline-offset: -1px;
       background: #c8f7dc;
     }
+
+    /* 地雷確定マス：赤枠 */
     .cell.hint-mine {
       outline: 3px solid #d50000;
       outline-offset: -1px;
     }
+
+    /* 一番安全候補マス：青点線枠（自動では開けない） */
     .cell.hint-best {
       outline: 3px dashed #2962ff;
       outline-offset: -1px;
@@ -132,14 +137,14 @@
 
     const size = 20;
     const mineCount = 100;
-    const DECEPTION_PROBABILITY = 0.5;
+    const DECEPTION_PROBABILITY = 0.5; // 数字が1小さくなる確率
 
     let gameOver = false;
     let openedCount = 0;
     let board = [];
     let timer = null;
     let timerSeconds = 0;
-    let firstClick = null;
+    let firstClick = null; // 最初のクリック位置（その周囲は安全）
 
     resetButton.addEventListener('click', init);
 
@@ -175,13 +180,13 @@
 
           const cell = {
             x, y,
-            mine: null,
+            mine: null,           // null / "normal" / "heavy"（内部）
             open: false,
-            flag: false,
-            flagType: null,
-            count: 0,
-            displayCount: null,
-            hintStatus: null,
+            flag: false,          // 自動フラグ
+            flagType: null,       // null / "unknown" / "normal" / "heavy"
+            count: 0,             // 真のカウント（内部）
+            displayCount: null,   // 画面上の数字（推論はこれだけ使用）
+            hintStatus: null,     // null / "safe" / "mine"
             el: cellEl
           };
           board[y][x] = cell;
@@ -191,12 +196,12 @@
       }
 
       clearHintsAndFlags();
-      updateHints();
+      updateHints(); // スタート時は情報ゼロなので何も出ない
     }
 
     function handleCellClick(cell) {
       if (gameOver || cell.open) return;
-      if (cell.flag) return;
+      if (cell.flag) return; // 旗があるところは押さない
 
       if (!firstClick) {
         firstClick = { x: cell.x, y: cell.y };
@@ -226,6 +231,8 @@
     function placeMines() {
       let mines = 0;
       const safeCells = new Set();
+
+      // 最初のクリック位置とその周囲3x3は地雷禁止
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const nx = firstClick.x + dx;
@@ -236,6 +243,7 @@
         }
       }
 
+      // 重爆弾の個数（セルの数）をランダムに決める
       const heavyMineCount = Math.floor(Math.random() * (mineCount + 1));
       let heavyMines = 0;
 
@@ -255,6 +263,7 @@
         }
       }
 
+      // 真のカウントを計算（内部専用）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -286,6 +295,7 @@
       openedCount++;
       cell.el.classList.add('open');
 
+      // 念のため、開いたセルの旗は消す
       if (cell.flag) {
         cell.flag = false;
         cell.flagType = null;
@@ -301,7 +311,7 @@
           if (Math.random() < DECEPTION_PROBABILITY) {
             displayCount = Math.max(1, cell.count - 1);
           }
-          cell.displayCount = displayCount;
+          cell.displayCount = displayCount; // 推論はこれだけを見る
           cell.el.textContent = displayCount;
           cell.el.style.color = getNumberColor(displayCount);
         }
@@ -345,6 +355,7 @@
       clearInterval(timer);
       statusEl.textContent = win ? 'クリア！' : 'ゲームオーバー';
 
+      // ゲーム終了後だけ内部情報を全開示
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -356,12 +367,16 @@
       }
     }
 
+    // ======== 推論＆ヒント部分（表示情報だけを使う） ========
+
     function clearHintsAndFlags() {
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
           c.hintStatus = null;
           c.el.classList.remove('hint-safe', 'hint-mine', 'hint-best');
+
+          // フラグは推論ごとに付け直すので一旦リセット
           if (!c.open) {
             c.flag = false;
             c.flagType = null;
@@ -372,7 +387,7 @@
       }
     }
 
-    function getNeighborsCoord(x, y) {
+    function getNeighbors(x, y) {
       const res = [];
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -387,8 +402,6 @@
       return res;
     }
 
-    const getNeighbors = getNeighborsCoord;
-
     function markSafe(cell) {
       if (cell.hintStatus === "mine") return;
       cell.hintStatus = "safe";
@@ -398,6 +411,8 @@
     function markMine(cell, mineType) {
       cell.hintStatus = "mine";
       cell.el.classList.add('hint-mine');
+
+      // 確定地雷には自動フラグ（1 / 2 / ?）
       cell.flag = true;
       cell.flagType = mineType;
       cell.el.classList.add('flag');
@@ -420,17 +435,19 @@
     function updateHints() {
       clearHintsAndFlags();
       if (gameOver) return;
-      if (!firstClick) return;
+      if (!firstClick) return; // まだ何も開いていない
 
+      // ---- 1. 全マスの初期 domain ----
       const poss = [];
       for (let y = 0; y < size; y++) {
         poss[y] = [];
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
-          poss[y][x] = cell.open ? new Set([0]) : new Set([0, 1, 2]);
+          poss[y][x] = cell.open ? new Set([0]) : new Set([0,1,2]);
         }
       }
 
+      // ---- 2. 数字ごとの局所制約で反復絞り込み ----
       const MAX_LOCAL_ITER = 8;
       for (let iter = 0; iter < MAX_LOCAL_ITER; iter++) {
         let changed = false;
@@ -445,7 +462,7 @@
             const vars = neighbors.filter(n => !n.open);
             if (vars.length === 0) continue;
 
-            let allowedSums = d === 0 ? [0] : [d, d + 1];
+            const allowedSums = d === 0 ? [0] : [d, d + 1];
             const maxAllowed = Math.max(...allowedSums);
 
             const doms = [];
@@ -461,7 +478,10 @@
             }
             if (skip) continue;
 
-            const localPossible = Array.from({length: vars.length}, () => new Set());
+            const localPossible = Array.from(
+              { length: vars.length },
+              () => new Set()
+            );
             let anySolution = false;
             const cur = new Array(vars.length).fill(0);
 
@@ -491,7 +511,9 @@
               const vCell = vars[i];
               const oldSet = poss[vCell.y][vCell.x];
               const newSet = new Set();
-              for (const val of oldSet) if (localPossible[i].has(val)) newSet.add(val);
+              for (const val of oldSet) {
+                if (localPossible[i].has(val)) newSet.add(val);
+              }
               if (newSet.size === 0) continue;
               if (
                 newSet.size !== oldSet.size ||
@@ -506,6 +528,7 @@
         if (!changed) break;
       }
 
+      // ---- 3. フロンティアを SAT で精度アップ（確率用） ----
       const idMap = Array.from({ length: size }, () =>
         Array(size).fill(-1)
       );
@@ -712,12 +735,14 @@
           }
         }
 
+        // SAT 結果で domain を更新
         for (let i = 0; i < F; i++) {
           const cell = frontier[i];
           poss[cell.y][cell.x] = varPossible[i];
         }
       }
 
+      // ---- 4. domain から「確定安全」「確定地雷」を付ける ----
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -740,8 +765,8 @@
         }
       }
 
+      // ---- 5. 安全確定マスだけ自動で開ける（これは論理的に確定） ----
       const openedBefore = openedCount;
-
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -755,13 +780,17 @@
       }
 
       if (!gameOver && openedCount > openedBefore) {
+        // 新しい情報が増えたので、もう一回論理推論
         updateHints();
         return;
       }
 
+      // ---- 6. それでも確定安全がない場合の「一番安全そうな候補」を青枠表示 ----
+
       let bestRisk = Infinity;
       let bestCells = [];
 
+      // まず SAT で確率が取れているフロンティアから探す
       if (F > 0) {
         for (let i = 0; i < F; i++) {
           const cell = frontier[i];
@@ -779,6 +808,7 @@
         }
       }
 
+      // SAT が効かないところは domain ベースのざっくり評価
       function localNumberRisk(cell) {
         const ns = getNeighbors(cell.x, cell.y);
         let sum = 0, cnt = 0;
@@ -834,21 +864,8 @@
       }
 
       if (bestCells.length > 0 && bestRisk < Infinity) {
-        // 一番安全そうなマスを表示＋自動で開ける
+        // ここは「一番マシな候補」を可視化するだけ。自動では開けない。
         markBestCells(bestCells);
-
-        const openedBeforeBest = openedCount;
-        for (const cell of bestCells) {
-          if (!cell.open && !cell.flag && !gameOver) {
-            openCell(cell);
-            if (!gameOver && cell.count === 0) {
-              openSurrounding(cell.x, cell.y);
-            }
-          }
-        }
-        if (!gameOver && openedCount > openedBeforeBest) {
-          updateHints();
-        }
       }
     }
 
