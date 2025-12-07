@@ -96,7 +96,7 @@
       outline-offset: -1px;
     }
 
-    /* 一番安全候補マス：青点線枠（自動では開けない） */
+    /* 一番安全候補マス：青点線枠（ここを1個ずつ自動クリック） */
     .cell.hint-best {
       outline: 3px dashed #2962ff;
       outline-offset: -1px;
@@ -146,6 +146,10 @@
     let timerSeconds = 0;
     let firstClick = null; // 最初のクリック位置（その周囲は安全）
 
+    // 自動プレイ用キューとタイマー
+    let autoPlayQueue = [];
+    let autoPlayTimeout = null;
+
     resetButton.addEventListener('click', init);
 
     function init() {
@@ -164,6 +168,13 @@
           timerEl.textContent = `時間: ${timerSeconds}`;
         }
       }, 1000);
+
+      // 自動プレイ状態リセット
+      autoPlayQueue = [];
+      if (autoPlayTimeout) {
+        clearTimeout(autoPlayTimeout);
+        autoPlayTimeout = null;
+      }
 
       const shortSide = Math.min(window.innerWidth, window.innerHeight) * 0.9;
       boardEl.style.width = `${shortSide}px`;
@@ -365,6 +376,13 @@
           }
         }
       }
+
+      // 自動プレイ停止
+      autoPlayQueue = [];
+      if (autoPlayTimeout) {
+        clearTimeout(autoPlayTimeout);
+        autoPlayTimeout = null;
+      }
     }
 
     // ======== 推論＆ヒント部分（表示情報だけを使う） ========
@@ -432,7 +450,33 @@
       }
     }
 
+    // 自動で青マスを1個ずつクリックする
+    function scheduleNextAutoClick() {
+      if (gameOver) return;
+      if (!autoPlayQueue || autoPlayQueue.length === 0) return;
+      if (autoPlayTimeout) return; // 二重タイマー防止
+
+      autoPlayTimeout = setTimeout(() => {
+        autoPlayTimeout = null;
+        const cell = autoPlayQueue.shift();
+        if (!cell) return;
+        if (gameOver || cell.open || cell.flag) {
+          // 既に状態が変わっていたら次へ
+          scheduleNextAutoClick();
+          return;
+        }
+        handleCellClick(cell);
+      }, 250); // ここで「ちょっと時間を置く」間隔を調整
+    }
+
     function updateHints() {
+      // 自動プレイの古いタイマー＆キューをクリア
+      if (autoPlayTimeout) {
+        clearTimeout(autoPlayTimeout);
+        autoPlayTimeout = null;
+      }
+      autoPlayQueue = [];
+
       clearHintsAndFlags();
       if (gameOver) return;
       if (!firstClick) return; // まだ何も開いていない
@@ -785,7 +829,7 @@
         return;
       }
 
-      // ---- 6. それでも確定安全がない場合の「一番安全そうな候補」を青枠表示 ----
+      // ---- 6. それでも確定安全がない場合の「一番安全そうな候補」を青枠表示 ＋ 自動クリックキューへ ----
 
       let bestRisk = Infinity;
       let bestCells = [];
@@ -808,7 +852,7 @@
         }
       }
 
-      // SAT が効かないところは domain ベースのざっくり評価
+      // SAT が効かないところは domain + 周囲の数字密度で評価
       function localNumberRisk(cell) {
         const ns = getNeighbors(cell.x, cell.y);
         let sum = 0, cnt = 0;
@@ -864,8 +908,10 @@
       }
 
       if (bestCells.length > 0 && bestRisk < Infinity) {
-        // ここは「一番マシな候補」を可視化するだけ。自動では開けない。
+        // 「一番マシな候補」を可視化しつつ、自動クリックキューに積む
         markBestCells(bestCells);
+        autoPlayQueue = bestCells.slice();
+        scheduleNextAutoClick();
       }
     }
 
