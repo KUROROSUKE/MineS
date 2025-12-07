@@ -186,11 +186,12 @@
           const cell = {
             x,
             y,
-            mine: null,           // null / "normal" / "heavy"
+            mine: null,           // null / "normal" / "heavy"（内部用・ヒントでは使わない）
             open: false,
             flag: false,          // 何かしらの旗が立っているか
             flagType: null,       // null / "unknown" / "normal" / "heavy"
-            count: 0,
+            count: 0,             // 真のカウント（内部用・ヒントでは使わない）
+            displayCount: null,   // 画面に見えている数字（欺瞞込み）※ヒントはこれのみ使用
             hintStatus: null,     // null / "safe" / "mine"
             mineTypeHint: null,   // null / "normal" / "heavy" / "unknown"
             el: cellEl
@@ -211,7 +212,7 @@
       if (flagMode) {
         if (!cell.open) {
           cycleFlag(cell);
-          updateHints(); // 旗の情報込みで再推論
+          updateHints(); // 旗の情報込みで再推論（表示情報だけ）
         }
         return;
       }
@@ -303,7 +304,7 @@
         }
       }
 
-      // 地雷以外のマスの「真のカウント」を計算（重爆弾は2カウント）
+      // 地雷以外のマスの真のカウント（内部用）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -342,13 +343,21 @@
         cell.el.classList.remove('flag');
       }
 
-      if (cell.count > 0 && !cell.mine) {
-        let displayCount = cell.count;
-        if (Math.random() < DECEPTION_PROBABILITY) {
-          displayCount = Math.max(1, cell.count - 1);
+      // 表示される数字を決める（ここがプレイヤーの持つ情報）
+      if (!cell.mine) {
+        if (cell.count === 0) {
+          // 0 のときは何も描かないが、displayCount は 0 として保持
+          cell.displayCount = 0;
+          cell.el.textContent = '';
+        } else {
+          let displayCount = cell.count;
+          if (Math.random() < DECEPTION_PROBABILITY) {
+            displayCount = Math.max(1, cell.count - 1);
+          }
+          cell.displayCount = displayCount;   // ★ ヒント側はこれだけを見る
+          cell.el.textContent = displayCount;
+          cell.el.style.color = getNumberColor(displayCount);
         }
-        cell.el.textContent = displayCount;
-        cell.el.style.color = getNumberColor(displayCount);
       }
     }
 
@@ -389,7 +398,7 @@
       clearInterval(timer);
       statusEl.textContent = win ? 'クリア！' : 'ゲームオーバー';
 
-      // 地雷を全表示
+      // 地雷を全表示（これはゲーム終了後だけの内部情報開示）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -401,7 +410,7 @@
       }
     }
 
-    // ---------- ヒント関連 ----------
+    // ---------- ヒント関連（表示情報だけを使う） ----------
 
     function clearHints() {
       for (let y = 0; y < size; y++) {
@@ -416,18 +425,23 @@
       }
     }
 
-    // 各数字マスごとに「取りうる全パターン」を全探索して、
+    // 各数字マスごとに「displayCount と旗の情報」だけを使って全パターン探索。
     // ・常に0 → 安全確定（緑枠）
-    // ・常に1or2 (>0) → 地雷確定（赤枠）
-    // をマークする（重爆弾＆旗情報込み）
+    // ・常に >0 → 地雷確定（赤枠）
     function updateHints() {
       clearHints();
-      if (!firstClick) return; // まだ地雷が置かれていないときは何もしない
+      if (!firstClick) return; // まだ何も見えていない
 
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
-          if (!cell.open || cell.mine || cell.count <= 0) continue;
+          if (!cell.open) continue;
+
+          // displayCount が null → まだ数字が出ていない（0 の場合もある）
+          // ゼロマスは N=0 として扱う（何も描かれてなくても「0」とみなせる）
+          const N = (cell.displayCount != null) ? cell.displayCount : 0;
+          if (N <= 0) continue; // 0 は制約にならないのでスキップしてもよいが、
+                               // 0 のときは別途「全部安全」ロジックを書いてもよい
 
           const neighbors = [];
           for (let dy = -1; dy <= 1; dy++) {
@@ -441,21 +455,15 @@
             }
           }
 
-          const N = cell.count;
           const domains = [];
-          const closedIndices = [];
-
-          // 各隣接マスの t_j ∈ {0,1,2} の取りうる集合を作る
           for (let i = 0; i < neighbors.length; i++) {
             const n = neighbors[i];
             let dom;
-
             if (n.open) {
-              // 開いている非地雷マス → 0固定
+              // 開いているマスは必ず 0（表示上：地雷ではないと分かっている）
               dom = [0];
             } else {
               // 閉じているマス（旗の種類で分岐）
-              closedIndices.push(i);
               if (n.flagType === "normal") {
                 dom = [1];
               } else if (n.flagType === "heavy") {
@@ -463,46 +471,42 @@
               } else if (n.flagType === "unknown" && n.flag) {
                 dom = [1, 2];
               } else {
-                // 旗なし → 0 or 1 or 2
+                // 旗なし → 地雷なし(0) or 1 or 2
                 dom = [0, 1, 2];
               }
             }
             domains.push(dom);
           }
 
-          // ありうる解での t_j を記録する
           const possibleValues = Array(neighbors.length)
             .fill(0)
             .map(() => new Set());
           let hasSolution = false;
+          const current = new Array(neighbors.length).fill(0);
 
           function dfs(idx, sum) {
-            if (sum > N) return;
+            if (sum > N) return; // これ以上増えても N を超えるので打ち切り
 
             if (idx === neighbors.length) {
               if (sum === N) {
                 hasSolution = true;
                 for (let k = 0; k < neighbors.length; k++) {
-                  const dom = current[k];
-                  possibleValues[k].add(dom);
+                  possibleValues[k].add(current[k]);
                 }
               }
               return;
             }
 
-            // 残りの最小・最大で pruning してもよいが、8マス程度なのでそのままでも十分
             for (const v of domains[idx]) {
               current[idx] = v;
               dfs(idx + 1, sum + v);
             }
           }
 
-          const current = new Array(neighbors.length).fill(0);
           dfs(0, 0);
 
           if (!hasSolution) {
-            // この数字マスと旗の組み合わせ自体が矛盾しているので、
-            // ヒントは何も出さない（ユーザーフラグが間違っている可能性など）
+            // この数字＋旗の組み合わせ自体が矛盾 → ヒントは何も出さない
             continue;
           }
 
@@ -512,7 +516,7 @@
             if (n.open) continue; // 既に開いているマスは対象外
 
             const vals = possibleValues[i];
-            if (vals.size === 0) continue; // ありえない（保険）
+            if (vals.size === 0) continue;
 
             const has0 = vals.has(0);
             const has1 = vals.has(1);
@@ -528,7 +532,8 @@
               let mineType = null;
               if (has1 && !has2) mineType = "normal";
               else if (!has1 && has2) mineType = "heavy";
-              else mineType = "unknown"; // 1も2もあり得る → 種別は不明だが地雷であることだけ確定
+              else mineType = "unknown"; // 1も2もあり得る
+
               markMine(n, mineType);
             }
           }
@@ -548,7 +553,7 @@
       cell.mineTypeHint = mineType;
       cell.el.classList.add('hint-mine');
 
-      // フラグがあるが種別不明なら補完する
+      // フラグがあるが種別不明なら補完する（表示は盤面情報の範囲内）
       if (cell.flag && (!cell.flagType || cell.flagType === "unknown")) {
         if (mineType === "normal") {
           cell.flagType = "normal";
@@ -557,7 +562,6 @@
           cell.flagType = "heavy";
           cell.el.textContent = '2';
         } else {
-          // unknown → 旗は「？」のままでもよいが、見た目維持
           cell.flagType = "unknown";
           cell.el.textContent = '🚩?';
         }
