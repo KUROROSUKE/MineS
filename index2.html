@@ -193,6 +193,8 @@
       }
 
       clearHintsAndFlags();
+      // スタート時にも一応推論を走らせておく（何も開いていないので実質何もしない）
+      updateHints();
     }
 
     function handleCellClick(cell) {
@@ -220,7 +222,8 @@
         openSurrounding(cell.x, cell.y);
       }
 
-      updateHints(); // 表示されている情報だけから推論
+      // クリックによる盤面変化が終わってから推論
+      updateHints();
 
       if (openedCount === size * size - mineCount) {
         endGame(true);
@@ -406,7 +409,7 @@
     // displayCount と「1小さい可能性」を考慮した反復制約伝播＋局所 SAT
     function updateHints() {
       clearHintsAndFlags();
-      if (!firstClick) return; // まだ何も見えていない
+      if (!firstClick || gameOver) return; // まだ何も見えていない / 終了後
 
       // ===== 1. 全マスの初期 domain を用意 =====
       // poss[y][x] = Set(0,1,2)（開いているマスは {0}）
@@ -625,7 +628,7 @@
       });
 
       // 3-5. 各成分ごとに SAT して varPossible を詰める
-      const MAX_VARS_SAT = 18; // これより大きい成分には SAT を掛けず、local 伝播のみで使う
+      const MAX_VARS_SAT = 18; // これより大きい成分には SAT を掛けず、local 伝播のみ
 
       for (const comp of components) {
         const compSet = new Set(comp);
@@ -653,9 +656,8 @@
 
         if (numVars === 0 || numCons === 0) continue;
 
-        // 成分が大きすぎる場合は SAT をスキップ（local 伝播結果だけ使う）
         if (numVars > MAX_VARS_SAT) {
-          continue;
+          continue; // 大きすぎる成分は SAT スキップ
         }
 
         // 各変数の domain（この成分内）を配列化
@@ -752,7 +754,6 @@
         dfsVar(0);
 
         if (!hasSolution) {
-          // この成分自体が矛盾している → 今回は何も絞らない
           continue;
         }
 
@@ -798,7 +799,9 @@
         }
       }
 
-      // ===== 5. 安全確定マスを自動で開く =====
+      // ===== 5. 安全確定マスを自動で開く → もし新しく開いたら再推論 =====
+      const openedBefore = openedCount;
+
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -809,6 +812,11 @@
             }
           }
         }
+      }
+
+      // 新しく開いたマスがあれば、最新状態で再度推論
+      if (!gameOver && openedCount > openedBefore) {
+        updateHints();
       }
     }
 
