@@ -83,20 +83,15 @@
       margin-top: 10px;
     }
 
-    /* 安全マス：太くて明るい枠＋背景も少し変える */
     .cell.hint-safe {
       outline: 4px solid #00e676;
       outline-offset: -1px;
       background: #c8f7dc;
     }
-
-    /* 地雷確定マス：赤枠 */
     .cell.hint-mine {
       outline: 3px solid #d50000;
       outline-offset: -1px;
     }
-
-    /* 一番安全候補マス：青点線枠 */
     .cell.hint-best {
       outline: 3px dashed #2962ff;
       outline-offset: -1px;
@@ -137,14 +132,14 @@
 
     const size = 20;
     const mineCount = 100;
-    const DECEPTION_PROBABILITY = 0.5; // 50%で表示数値を-1（ただし最小1）
+    const DECEPTION_PROBABILITY = 0.5;
 
     let gameOver = false;
     let openedCount = 0;
     let board = [];
     let timer = null;
     let timerSeconds = 0;
-    let firstClick = null; // 最初のクリック位置（その周囲は安全）
+    let firstClick = null;
 
     resetButton.addEventListener('click', init);
 
@@ -176,20 +171,17 @@
         for (let x = 0; x < size; x++) {
           const cellEl = document.createElement('div');
           cellEl.className = 'cell';
-          cellEl.dataset.x = x;
-          cellEl.dataset.y = y;
           boardEl.appendChild(cellEl);
 
           const cell = {
-            x,
-            y,
-            mine: null,           // null / "normal" / "heavy"（内部用）
+            x, y,
+            mine: null,
             open: false,
-            flag: false,          // 自動フラグ
-            flagType: null,       // null / "unknown" / "normal" / "heavy"
-            count: 0,             // 真のカウント（内部用）
-            displayCount: null,   // 画面上の数字（欺瞞込み）※推論ではこれだけ使用
-            hintStatus: null,     // null / "safe" / "mine"
+            flag: false,
+            flagType: null,
+            count: 0,
+            displayCount: null,
+            hintStatus: null,
             el: cellEl
           };
           board[y][x] = cell;
@@ -199,14 +191,13 @@
       }
 
       clearHintsAndFlags();
-      updateHints(); // スタート時は情報ゼロなので何も出ない
+      updateHints();
     }
 
     function handleCellClick(cell) {
       if (gameOver || cell.open) return;
-      if (cell.flag) return; // 旗が置いてあるところは押せない
+      if (cell.flag) return;
 
-      // 最初のクリックで地雷配置（そのマスと周囲3x3を安全に）
       if (!firstClick) {
         firstClick = { x: cell.x, y: cell.y };
         placeMines();
@@ -225,7 +216,6 @@
         openSurrounding(cell.x, cell.y);
       }
 
-      // 操作後の状態で推論
       updateHints();
 
       if (openedCount === size * size - mineCount) {
@@ -236,8 +226,6 @@
     function placeMines() {
       let mines = 0;
       const safeCells = new Set();
-
-      // 最初のクリック位置とその周囲3x3は地雷禁止
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           const nx = firstClick.x + dx;
@@ -248,7 +236,6 @@
         }
       }
 
-      // 重爆弾(2カウント)の数をランダムに決定（ゲーム内部用）
       const heavyMineCount = Math.floor(Math.random() * (mineCount + 1));
       let heavyMines = 0;
 
@@ -268,7 +255,6 @@
         }
       }
 
-      // 地雷以外のマスの真のカウント（内部用）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -300,7 +286,6 @@
       openedCount++;
       cell.el.classList.add('open');
 
-      // 開いたセル上のフラグは消す（保険）
       if (cell.flag) {
         cell.flag = false;
         cell.flagType = null;
@@ -316,7 +301,7 @@
           if (Math.random() < DECEPTION_PROBABILITY) {
             displayCount = Math.max(1, cell.count - 1);
           }
-          cell.displayCount = displayCount;   // 推論はこれだけを見る
+          cell.displayCount = displayCount;
           cell.el.textContent = displayCount;
           cell.el.style.color = getNumberColor(displayCount);
         }
@@ -360,7 +345,6 @@
       clearInterval(timer);
       statusEl.textContent = win ? 'クリア！' : 'ゲームオーバー';
 
-      // 地雷を全表示（ゲーム終了後だけ内部情報を開示）
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
@@ -372,17 +356,12 @@
       }
     }
 
-    // ---------- ヒント & 自動フラグ（表示情報だけを使用） ----------
-
     function clearHintsAndFlags() {
       for (let y = 0; y < size; y++) {
-        if (!board[y]) continue;
         for (let x = 0; x < size; x++) {
           const c = board[y][x];
-          if (!c) continue;
           c.hintStatus = null;
           c.el.classList.remove('hint-safe', 'hint-mine', 'hint-best');
-          // フラグは推論のたびに付け直すので一旦リセット
           if (!c.open) {
             c.flag = false;
             c.flagType = null;
@@ -393,7 +372,7 @@
       }
     }
 
-    function getNeighbors(x, y) {
+    function getNeighborsCoord(x, y) {
       const res = [];
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -408,6 +387,8 @@
       return res;
     }
 
+    const getNeighbors = getNeighborsCoord;
+
     function markSafe(cell) {
       if (cell.hintStatus === "mine") return;
       cell.hintStatus = "safe";
@@ -417,8 +398,6 @@
     function markMine(cell, mineType) {
       cell.hintStatus = "mine";
       cell.el.classList.add('hint-mine');
-
-      // 自動フラグ付与（わからない／1／2）
       cell.flag = true;
       cell.flagType = mineType;
       cell.el.classList.add('flag');
@@ -438,29 +417,20 @@
       }
     }
 
-    // displayCount と「1小さい可能性」を考慮した反復制約伝播＋局所 SAT
     function updateHints() {
       clearHintsAndFlags();
       if (gameOver) return;
-
-      // スタート前：情報がないので「一番安全」は定義しない
       if (!firstClick) return;
 
-      // ===== 1. 全マスの初期 domain を用意 =====
       const poss = [];
       for (let y = 0; y < size; y++) {
         poss[y] = [];
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
-          if (cell.open) {
-            poss[y][x] = new Set([0]);
-          } else {
-            poss[y][x] = new Set([0, 1, 2]);
-          }
+          poss[y][x] = cell.open ? new Set([0]) : new Set([0, 1, 2]);
         }
       }
 
-      // ===== 2. 数字ごとの局所制約で何周か domain を絞る =====
       const MAX_LOCAL_ITER = 8;
       for (let iter = 0; iter < MAX_LOCAL_ITER; iter++) {
         let changed = false;
@@ -475,13 +445,7 @@
             const vars = neighbors.filter(n => !n.open);
             if (vars.length === 0) continue;
 
-            let allowedSums;
-            if (d === 0) {
-              allowedSums = [0];
-            } else {
-              allowedSums = [d, d + 1];
-            }
-
+            let allowedSums = d === 0 ? [0] : [d, d + 1];
             const maxAllowed = Math.max(...allowedSums);
 
             const doms = [];
@@ -492,18 +456,12 @@
               if (s.has(0)) domArr.push(0);
               if (s.has(1)) domArr.push(1);
               if (s.has(2)) domArr.push(2);
-              if (domArr.length === 0) {
-                skip = true;
-                break;
-              }
+              if (domArr.length === 0) { skip = true; break; }
               doms.push(domArr);
             }
             if (skip) continue;
 
-            const localPossible = Array.from(
-              { length: vars.length },
-              () => new Set()
-            );
+            const localPossible = Array.from({length: vars.length}, () => new Set());
             let anySolution = false;
             const cur = new Array(vars.length).fill(0);
 
@@ -511,11 +469,8 @@
               if (sum > maxAllowed) return;
               if (idx === vars.length) {
                 let ok = false;
-                for (const a of allowedSums) {
-                  if (sum === a) { ok = true; break; }
-                }
+                for (const a of allowedSums) if (sum === a) { ok = true; break; }
                 if (!ok) return;
-
                 anySolution = true;
                 for (let k = 0; k < vars.length; k++) {
                   localPossible[k].add(cur[k]);
@@ -536,9 +491,7 @@
               const vCell = vars[i];
               const oldSet = poss[vCell.y][vCell.x];
               const newSet = new Set();
-              for (const val of oldSet) {
-                if (localPossible[i].has(val)) newSet.add(val);
-              }
+              for (const val of oldSet) if (localPossible[i].has(val)) newSet.add(val);
               if (newSet.size === 0) continue;
               if (
                 newSet.size !== oldSet.size ||
@@ -550,11 +503,9 @@
             }
           }
         }
-
         if (!changed) break;
       }
 
-      // ===== 3. フロンティアを変数化して局所 SAT を掛ける（確率も計算） =====
       const idMap = Array.from({ length: size }, () =>
         Array(size).fill(-1)
       );
@@ -580,7 +531,6 @@
       }
 
       const F = frontier.length;
-
       const constraints = [];
       if (F > 0) {
         for (let y = 0; y < size; y++) {
@@ -598,13 +548,7 @@
               }
             }
             if (vars.length === 0) continue;
-
-            let allowedSums;
-            if (d === 0) {
-              allowedSums = [0];
-            } else {
-              allowedSums = [d, d + 1];
-            }
+            const allowedSums = d === 0 ? [0] : [d, d + 1];
             constraints.push({ vars, allowedSums });
           }
         }
@@ -671,10 +615,7 @@
               }
             }
             if (localVars.length === 0) continue;
-            compConstraints.push({
-              vars: localVars,
-              allowedSums: c.allowedSums
-            });
+            compConstraints.push({ vars: localVars, allowedSums: c.allowedSums });
           }
 
           const numVars = comp.length;
@@ -691,17 +632,13 @@
             if (s.has(0)) domArr.push(0);
             if (s.has(1)) domArr.push(1);
             if (s.has(2)) domArr.push(2);
-            if (domArr.length === 0) {
-              invalidComponent = true;
-              break;
-            }
+            if (domArr.length === 0) { invalidComponent = true; break; }
             doms.push(domArr);
           }
           if (invalidComponent) continue;
 
           const consSum = Array(numCons).fill(0);
           const consRemain = compConstraints.map(c => c.vars.length);
-
           const varCons = Array.from({ length: numVars }, () => []);
           for (let ci = 0; ci < numCons; ci++) {
             const vs = compConstraints[ci].vars;
@@ -713,8 +650,7 @@
           const compPossible = Array.from({ length: numVars }, () => new Set());
           const assign = Array(numVars).fill(0);
           let hasSolution = false;
-
-          const freq = Array.from({ length: numVars }, () => [0, 0, 0]);
+          const freq = Array.from({ length: numVars }, () => [0,0,0]);
           let solutionCount = 0;
 
           function dfsVar(pos) {
@@ -723,12 +659,7 @@
                 const s = consSum[ci];
                 const allowed = compConstraints[ci].allowedSums;
                 let ok = false;
-                for (const a of allowed) {
-                  if (s === a) {
-                    ok = true;
-                    break;
-                  }
-                }
+                for (const a of allowed) if (s === a) { ok = true; break; }
                 if (!ok) return;
               }
               hasSolution = true;
@@ -752,22 +683,15 @@
 
                 const allowed = compConstraints[ci].allowedSums;
                 const minTotal = consSum[ci];
-                const maxTotal = consSum[ci] + consRemain[ci] * 2;
+                const maxTotal = consSum[ci] + consRemain[ci]*2;
 
                 let okRange = false;
                 for (const a of allowed) {
-                  if (a >= minTotal && a <= maxTotal) {
-                    okRange = true;
-                    break;
-                  }
+                  if (a >= minTotal && a <= maxTotal) { okRange = true; break; }
                 }
-                if (!okRange) {
-                  pruned = true;
-                }
+                if (!okRange) pruned = true;
               }
-
-              if (!pruned) dfsVar(pos + 1);
-
+              if (!pruned) dfsVar(pos+1);
               for (const ci of touched) {
                 consSum[ci] -= val;
                 consRemain[ci]++;
@@ -776,46 +700,37 @@
           }
 
           dfsVar(0);
-
           if (!hasSolution || solutionCount === 0) continue;
 
           for (let li = 0; li < numVars; li++) {
             const gid = comp[li];
             const pset = compPossible[li];
             if (pset.size > 0) varPossible[gid] = pset;
-
             const f = freq[li];
             const mineCountFreq = f[1] + f[2];
-            const risk = mineCountFreq / solutionCount;
-            varRisk[gid] = risk;
+            varRisk[gid] = mineCountFreq / solutionCount;
           }
         }
 
-        // SAT で絞れた varPossible を poss に反映
         for (let i = 0; i < F; i++) {
           const cell = frontier[i];
           poss[cell.y][cell.x] = varPossible[i];
         }
       }
 
-      // ===== 4. poss を元に安全／地雷＋自動フラグを付ける =====
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
           if (cell.open) continue;
           const s = poss[y][x];
           if (!s || s.size === 0) continue;
-
           const has0 = s.has(0);
           const has1 = s.has(1);
           const has2 = s.has(2);
 
-          // 常に0 → 安全確定
           if (!has1 && !has2 && has0) {
             markSafe(cell);
           }
-
-          // 0 があり得ない（1 or 2 のみ） → 地雷確定
           if (!has0 && (has1 || has2)) {
             let type = "unknown";
             if (has1 && !has2) type = "normal";
@@ -825,7 +740,6 @@
         }
       }
 
-      // ===== 5. 安全確定マスを自動で開く → 新しく開いたら再推論 =====
       const openedBefore = openedCount;
 
       for (let y = 0; y < size; y++) {
@@ -841,27 +755,21 @@
       }
 
       if (!gameOver && openedCount > openedBefore) {
-        updateHints(); // 新しい情報で再推論
+        updateHints();
         return;
       }
-
-      // ===== 6. 確定安全がなくなったので、「一番地雷が少なそうなマス」を出す =====
-      // ここでは「数字の隣（フロンティア）」だけを候補にする。
 
       let bestRisk = Infinity;
       let bestCells = [];
 
-      // 6-1 SAT（varRisk）が計算できているフロンティアだけで、最安全を探す
       if (F > 0) {
         for (let i = 0; i < F; i++) {
           const cell = frontier[i];
           if (cell.open || cell.flag) continue;
           const s = poss[cell.y][cell.x];
-          if (!s || !s.has(0)) continue; // そもそも安全になり得ないマスは除外
-
+          if (!s || !s.has(0)) continue;
           const r = varRisk[i];
-          if (r == null) continue;       // 確率が計算できていない
-
+          if (r == null) continue;
           if (r < bestRisk - 1e-9) {
             bestRisk = r;
             bestCells = [cell];
@@ -871,37 +779,28 @@
         }
       }
 
-      // 局所的な数字密度からリスクを計算する関数
       function localNumberRisk(cell) {
         const ns = getNeighbors(cell.x, cell.y);
-        let sum = 0;
-        let cnt = 0;
+        let sum = 0, cnt = 0;
         for (const numCell of ns) {
           if (!numCell.open) continue;
           if (numCell.displayCount == null || numCell.displayCount === 0) continue;
           const d = numCell.displayCount;
-
           const around = getNeighbors(numCell.x, numCell.y);
           let unk = 0;
-          for (const a of around) {
-            if (!a.open) unk++;
-          }
+          for (const a of around) if (!a.open) unk++;
           if (unk === 0) continue;
-
-          // その数字の「1マスあたり平均爆弾密度」を d / unk とみなす
           const r = Math.min(1, d / unk);
           sum += r;
           cnt++;
         }
         if (cnt === 0) return null;
-        return sum / cnt; // 周囲の数字からの平均リスク
+        return sum / cnt;
       }
 
-      // 6-2 SAT ベースで候補が1つもなければ、フロンティアの domain + 数字密度から簡易リスクで評価
       if (bestCells.length === 0 && F > 0) {
         bestRisk = Infinity;
         bestCells = [];
-
         for (let i = 0; i < F; i++) {
           const cell = frontier[i];
           if (cell.open || cell.flag) continue;
@@ -912,7 +811,6 @@
           const has1 = s.has(1);
           const has2 = s.has(2);
 
-          // domain からの簡易リスク
           let domainRisk;
           if (has0 && !has1 && !has2) {
             domainRisk = 0.0;
@@ -922,13 +820,8 @@
             domainRisk = mineKinds / totalKinds;
           }
 
-          // 周囲の数字からの局所リスク
           let numRisk = localNumberRisk(cell);
-          if (numRisk == null) {
-            numRisk = domainRisk; // 数字が無いことはフロンティアではほぼ無いが念のため
-          }
-
-          // 両方を混ぜて最終リスクにする（数字密度をやや重視）
+          if (numRisk == null) numRisk = domainRisk;
           const combinedRisk = 0.4 * domainRisk + 0.6 * numRisk;
 
           if (combinedRisk < bestRisk - 1e-9) {
@@ -940,13 +833,25 @@
         }
       }
 
-      // 6-3 候補があれば青枠で表示（候補がない＝全部同じくらい危険 ⇒ 何も出さない）
       if (bestCells.length > 0 && bestRisk < Infinity) {
+        // 一番安全そうなマスを表示＋自動で開ける
         markBestCells(bestCells);
+
+        const openedBeforeBest = openedCount;
+        for (const cell of bestCells) {
+          if (!cell.open && !cell.flag && !gameOver) {
+            openCell(cell);
+            if (!gameOver && cell.count === 0) {
+              openSurrounding(cell.x, cell.y);
+            }
+          }
+        }
+        if (!gameOver && openedCount > openedBeforeBest) {
+          updateHints();
+        }
       }
     }
 
-    // 初期化
     init();
   </script>
 </body>
