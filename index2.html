@@ -96,7 +96,7 @@
       outline-offset: -1px;
     }
 
-    /* 一番安全候補マス：青点線枠（ここを1個ずつ自動クリック） */
+    /* 一番安全候補マス：青点線枠（自動では開けない） */
     .cell.hint-best {
       outline: 3px dashed #2962ff;
       outline-offset: -1px;
@@ -146,10 +146,6 @@
     let timerSeconds = 0;
     let firstClick = null; // 最初のクリック位置（その周囲は安全）
 
-    // 自動プレイ用キューとタイマー
-    let autoPlayQueue = [];
-    let autoPlayTimeout = null;
-
     resetButton.addEventListener('click', init);
 
     function init() {
@@ -168,13 +164,6 @@
           timerEl.textContent = `時間: ${timerSeconds}`;
         }
       }, 1000);
-
-      // 自動プレイ状態リセット
-      autoPlayQueue = [];
-      if (autoPlayTimeout) {
-        clearTimeout(autoPlayTimeout);
-        autoPlayTimeout = null;
-      }
 
       const shortSide = Math.min(window.innerWidth, window.innerHeight) * 0.9;
       boardEl.style.width = `${shortSide}px`;
@@ -376,13 +365,6 @@
           }
         }
       }
-
-      // 自動プレイ停止
-      autoPlayQueue = [];
-      if (autoPlayTimeout) {
-        clearTimeout(autoPlayTimeout);
-        autoPlayTimeout = null;
-      }
     }
 
     // ======== 補助関数 ========
@@ -450,35 +432,9 @@
       }
     }
 
-    // 自動で青マスを1個ずつクリックする
-    function scheduleNextAutoClick() {
-      if (gameOver) return;
-      if (!autoPlayQueue || autoPlayQueue.length === 0) return;
-      if (autoPlayTimeout) return; // 二重タイマー防止
-
-      autoPlayTimeout = setTimeout(() => {
-        autoPlayTimeout = null;
-        const cell = autoPlayQueue.shift();
-        if (!cell) return;
-        if (gameOver || cell.open || cell.flag) {
-          // 既に状態が変わっていたら次へ
-          scheduleNextAutoClick();
-          return;
-        }
-        handleCellClick(cell);
-      }, 250); // ここで「ちょっと時間を置く」間隔を調整
-    }
-
     // ======== メイン推論（範囲[min,max] 伝播） ========
 
     function updateHints() {
-      // 自動プレイの古いタイマー＆キューをクリア
-      if (autoPlayTimeout) {
-        clearTimeout(autoPlayTimeout);
-        autoPlayTimeout = null;
-      }
-      autoPlayQueue = [];
-
       clearHintsAndFlags();
       if (gameOver) return;
       if (!firstClick) return; // まだ何も開いていない
@@ -510,7 +466,7 @@
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
           if (!cell.open) continue;
-          if (cell.displayCount == null) continue; // 空白マス（0）は null or 0扱い
+          if (cell.displayCount == null) continue;
 
           const d = cell.displayCount;
           const neighbors = getNeighbors(x, y);
@@ -554,8 +510,7 @@
           let L = Math.max(c.baseL, sumLow);
           let U = Math.min(c.baseU, sumHigh);
           if (L > U) {
-            // 矛盾している可能性はあるが、ゲーム的には起こらないはずなので、
-            // 一応潰しておく（ここでは単に L=U に寄せる）
+            // 矛盾は起きない前提だが保険で
             L = U;
           }
 
@@ -574,7 +529,6 @@
 
             if (newLow > newHigh) {
               // ここも矛盾検出だが、ゲームでは起きない前提
-              // 一応スキップ
               continue;
             }
 
@@ -637,7 +591,7 @@
         return;
       }
 
-      // ---- 6. それでも確定安全がない場合、「一番安全そうな候補」を評価 ----
+      // ---- 6. それでも確定安全がない場合、「一番安全そうな候補」を評価（表示だけ） ----
 
       // フロンティア（数字に隣接している未確定マス）
       const frontier = [];
@@ -701,7 +655,7 @@
         const lv = low[cell.y][cell.x];
         const hv = high[cell.y][cell.x];
 
-        // 安全確定 or 地雷確定は除外（ここはもう開いてるか旗になっている）
+        // 安全確定 or 地雷確定は除外
         if (hv === 0) continue;
         if (lv >= 1) continue;
 
@@ -720,10 +674,8 @@
       }
 
       if (bestCells.length > 0 && bestRisk < Infinity) {
-        // 「一番マシな候補」を可視化しつつ、自動クリックキューに積む
+        // 「一番マシな候補」を青枠で表示するだけ（自動クリックはしない）
         markBestCells(bestCells);
-        autoPlayQueue = bestCells.slice();
-        scheduleNextAutoClick();
       }
     }
 
