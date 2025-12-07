@@ -199,8 +199,7 @@
       }
 
       clearHintsAndFlags();
-      // スタート時は情報ゼロなので「一番安全」は定義できない ⇒ 何も出さない
-      updateHints();
+      updateHints(); // スタート時は情報ゼロなので何も出ない
     }
 
     function handleCellClick(cell) {
@@ -582,7 +581,6 @@
 
       const F = frontier.length;
 
-      // 制約構築
       const constraints = [];
       if (F > 0) {
         for (let y = 0; y < size; y++) {
@@ -848,53 +846,66 @@
       }
 
       // ===== 6. 確定安全がなくなったので、「一番地雷が少なそうなマス」を出す =====
+      // ここでは「数字の隣（フロンティア）」だけを候補にする。
+
       let bestRisk = Infinity;
-      const bestCells = [];
+      let bestCells = [];
 
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const cell = board[y][x];
+      // 6-1 SAT（varRisk）が計算できているフロンティアだけで、最安全を探す
+      if (F > 0) {
+        for (let i = 0; i < F; i++) {
+          const cell = frontier[i];
           if (cell.open || cell.flag) continue;
+          const s = poss[cell.y][cell.x];
+          if (!s || !s.has(0)) continue; // そもそも安全になり得ないマスは除外
 
-          const s = poss[y][x];
-          if (!s) continue;
+          const r = varRisk[i];
+          if (r == null) continue;       // 確率が計算できていない
 
-          const has0 = s.has(0);
-          const has1 = s.has(1);
-          const has2 = s.has(2);
-
-          // domain から簡易リスク（0を含まないなら絶対地雷）
-          let domainRisk;
-          if (!has0 && (has1 || has2)) {
-            domainRisk = 1.0;
-          } else if (has0 && !has1 && !has2) {
-            domainRisk = 0.0;
-          } else {
-            // 0,1,2 のうち「地雷値」の種類数 / 総種類数 でざっくり
-            const mineKinds = (has1 ? 1 : 0) + (has2 ? 1 : 0);
-            const totalKinds = (has0 ? 1 : 0) + mineKinds;
-            domainRisk = mineKinds / totalKinds;
-          }
-
-          // フロンティアで SAT による確率があれば、それを優先的に使う
-          let risk = domainRisk;
-          if (F > 0) {
-            const id = idMap[y][x];
-            if (id !== -1 && varRisk[id] != null) {
-              risk = varRisk[id];
-            }
-          }
-
-          if (risk < bestRisk - 1e-9) {
-            bestRisk = risk;
-            bestCells.length = 0;
-            bestCells.push(cell);
-          } else if (Math.abs(risk - bestRisk) < 1e-9) {
+          if (r < bestRisk - 1e-9) {
+            bestRisk = r;
+            bestCells = [cell];
+          } else if (Math.abs(r - bestRisk) < 1e-9) {
             bestCells.push(cell);
           }
         }
       }
 
+      // 6-2 SAT ベースで候補が1つもなければ、フロンティアの domain から簡易リスクで評価
+      if (bestCells.length === 0 && F > 0) {
+        bestRisk = Infinity;
+        bestCells = [];
+
+        for (let i = 0; i < F; i++) {
+          const cell = frontier[i];
+          if (cell.open || cell.flag) continue;
+          const s = poss[cell.y][cell.x];
+          if (!s || !s.has(0)) continue;
+
+          const has0 = s.has(0);
+          const has1 = s.has(1);
+          const has2 = s.has(2);
+
+          // domain から簡易リスク（0を含まないなら絶対地雷なので除外済み）
+          let domainRisk;
+          if (has0 && !has1 && !has2) {
+            domainRisk = 0.0;
+          } else {
+            const mineKinds = (has1 ? 1 : 0) + (has2 ? 1 : 0);
+            const totalKinds = (has0 ? 1 : 0) + mineKinds;
+            domainRisk = mineKinds / totalKinds;
+          }
+
+          if (domainRisk < bestRisk - 1e-9) {
+            bestRisk = domainRisk;
+            bestCells = [cell];
+          } else if (Math.abs(domainRisk - bestRisk) < 1e-9) {
+            bestCells.push(cell);
+          }
+        }
+      }
+
+      // 6-3 候補があれば青枠で表示（候補がない＝全部同じくらい危険 ⇒ 何も出さない）
       if (bestCells.length > 0 && bestRisk < Infinity) {
         markBestCells(bestCells);
       }
