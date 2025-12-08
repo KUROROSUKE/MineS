@@ -145,6 +145,7 @@
     const mineCount = 100;
     const DECEPTION_PROBABILITY = 0.5; // 数字が1小さくなる確率
     const GOOD_RATIO = 0.25;          // 「良い感じ」の閾値（1/4）
+    const GOOD_BIG_NUMBER_MIN = 5;    // 4以上の数字の最低個数
     const GOOD_SEARCH_MAX_TRIES = 200; // 最大試行回数
 
     let gameOver = false;
@@ -411,7 +412,8 @@
       if (!goodSearchRunning) return;
 
       if (goodSearchTries >= GOOD_SEARCH_MAX_TRIES) {
-        statusEl.textContent = `良い感じの盤面が ${GOOD_SEARCH_MAX_TRIES} 回以内には見つかりませんでした`;
+        statusEl.textContent =
+          `良い感じの盤面が ${GOOD_SEARCH_MAX_TRIES} 回以内には見つかりませんでした`;
         stopGoodSearch();
         return;
       }
@@ -440,19 +442,30 @@
 
     function isGoodBoard() {
       const totalCells = size * size;
-      let count = 0;
+      let solvedOrFlagged = 0;
+      let bigNumberCount = 0; // 表示4以上の数字マスの個数
+
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
+
           if (cell.open) {
-            count++;
+            solvedOrFlagged++;
+            // 開いている数字マスで displayCount >= 4 を数える
+            if (cell.displayCount != null && cell.displayCount >= 4) {
+              bigNumberCount++;
+            }
           } else if (!cell.open && cell.flag && cell.hintStatus === 'mine') {
             // 論理的に確定した地雷マス
-            count++;
+            solvedOrFlagged++;
           }
         }
       }
-      return count >= totalCells * GOOD_RATIO;
+
+      const enoughSolved = solvedOrFlagged >= totalCells * GOOD_RATIO;
+      const enoughBigNumbers = bigNumberCount >= GOOD_BIG_NUMBER_MIN;
+
+      return enoughSolved && enoughBigNumbers;
     }
 
     // ======== 補助関数（ヒント・範囲推論） ========
