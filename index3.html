@@ -143,10 +143,11 @@
 
     const size = 20;
     const mineCount = 100;
-    const DECEPTION_PROBABILITY = 0.5; // 数字が1小さくなる確率
+    const DECEPTION_PROBABILITY = 0.5; // 数字が1少なくなる確率
     const GOOD_RATIO = 0.25;          // 「良い感じ」の閾値（1/4）
     const GOOD_BIG_NUMBER_MIN = 5;    // 4以上の数字の最低個数
-    const GOOD_SEARCH_MAX_TRIES = 200; // 最大試行回数
+    const GOOD_SEARCH_MAX_TRIES = 200; // 盤面の最大試行回数
+    const GOOD_SEARCH_MAX_RANDOM_CLICKS_PER_BOARD = 400; // 1盤面あたりランダムクリック上限
 
     let gameOver = false;
     let openedCount = 0;
@@ -159,6 +160,7 @@
     let goodSearchRunning = false;
     let goodSearchTries = 0;
     let goodSearchTimeout = null;
+    let goodSearchRandomClicksOnBoard = 0;
 
     resetButton.addEventListener('click', () => {
       stopGoodSearch();
@@ -383,9 +385,7 @@
           }
         }
       }
-
-      // 良い盤面探索中なら止める
-      stopGoodSearch();
+      // 良い盤面探索中でもここでは止めない
     }
 
     // ======== 良い盤面探索ロジック ========
@@ -394,9 +394,10 @@
       if (goodSearchRunning) return;
       goodSearchRunning = true;
       goodSearchTries = 0;
+      goodSearchRandomClicksOnBoard = 0;
       goodStartButton.disabled = true;
       statusEl.textContent = '良い感じの盤面を探索中...';
-      runGoodSearchStep();
+      startNewBoardForGoodSearch();
     }
 
     function stopGoodSearch() {
@@ -408,7 +409,7 @@
       goodStartButton.disabled = false;
     }
 
-    function runGoodSearchStep() {
+    function startNewBoardForGoodSearch() {
       if (!goodSearchRunning) return;
 
       if (goodSearchTries >= GOOD_SEARCH_MAX_TRIES) {
@@ -418,17 +419,23 @@
         return;
       }
       goodSearchTries++;
+      goodSearchRandomClicksOnBoard = 0;
 
-      // 1. リセット（新しい盤面）
+      // 新しい盤面を作成
       init();
 
-      // 2. 真ん中を自動クリック
+      // 真ん中を自動クリック
       const cx = Math.floor(size / 2);
       const cy = Math.floor(size / 2);
       const centerCell = board[cy][cx];
       handleCellClick(centerCell); // ここでロジックが広がり、updateHints() も走る
 
-      // 3. 条件を満たしているかチェック
+      if (gameOver) {
+        // いきなり爆死したら次の盤面へ
+        goodSearchTimeout = setTimeout(startNewBoardForGoodSearch, 50);
+        return;
+      }
+
       if (isGoodBoard()) {
         statusEl.textContent =
           `良い感じの盤面を見つけました！（試行回数: ${goodSearchTries}回）`;
@@ -436,8 +443,58 @@
         return;
       }
 
-      // 4. まだなら少し待ってから次の盤面で再チャレンジ
-      goodSearchTimeout = setTimeout(runGoodSearchStep, 50);
+      // ランダムクリックループへ
+      goodSearchTimeout = setTimeout(runRandomClickOnCurrentBoard, 50);
+    }
+
+    function runRandomClickOnCurrentBoard() {
+      if (!goodSearchRunning) return;
+
+      if (isGoodBoard()) {
+        statusEl.textContent =
+          `良い感じの盤面を見つけました！（試行回数: ${goodSearchTries}回, ランダムクリック: ${goodSearchRandomClicksOnBoard}回）`;
+        stopGoodSearch();
+        return;
+      }
+
+      if (gameOver) {
+        // この盤面は終了したので、次の盤面へ
+        goodSearchTimeout = setTimeout(startNewBoardForGoodSearch, 50);
+        return;
+      }
+
+      if (goodSearchRandomClicksOnBoard >= GOOD_SEARCH_MAX_RANDOM_CLICKS_PER_BOARD) {
+        // この盤面での探索は諦めて次へ
+        goodSearchTimeout = setTimeout(startNewBoardForGoodSearch, 50);
+        return;
+      }
+
+      // ランダムにクリックする候補を集める
+      const candidates = [];
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const cell = board[y][x];
+          if (cell.open) continue;
+          if (cell.flag) continue;
+          if (cell.hintStatus === 'mine') continue; // 地雷確定は避ける
+          candidates.push(cell);
+        }
+      }
+
+      if (candidates.length === 0) {
+        // もう押せるところがない → 次の盤面へ
+        goodSearchTimeout = setTimeout(startNewBoardForGoodSearch, 50);
+        return;
+      }
+
+      // 完全ランダムで1マス選んでクリック
+      const idx = Math.floor(Math.random() * candidates.length);
+      const target = candidates[idx];
+      goodSearchRandomClicksOnBoard++;
+      handleCellClick(target);
+
+      // 次のランダムクリックへ
+      goodSearchTimeout = setTimeout(runRandomClickOnCurrentBoard, 50);
     }
 
     function isGoodBoard() {
@@ -720,7 +777,7 @@
         if (lv <= 2 && 2 <= hv) vals.push(2);
         if (vals.length === 0) return 1; // ありえないが、保険で最大リスク
 
-        let mineCount = 0;
+      let mineCount = 0;
         for (const v of vals) {
           if (v >= 1) mineCount++;
         }
