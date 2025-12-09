@@ -144,9 +144,9 @@
     const size = 20;
     const mineCount = 100;
     const DECEPTION_PROBABILITY = 0.5; // 数字が1少なくなる確率
-    const GOOD_RATIO = 0.35;          // 「良い感じ」の閾値（1/4）
-    const GOOD_BIG_NUMBER_MIN = 12;    // 4以上の数字の最低個数
-    const GOOD_SEARCH_MAX_TRIES = 2000; // 盤面の最大試行回数
+    const GOOD_RATIO = 0.25;          // 「良い感じ」の閾値（1/4）
+    const GOOD_BIG_NUMBER_MIN = 5;    // 4以上の数字の最低個数
+    const GOOD_SEARCH_MAX_TRIES = 200; // 盤面の最大試行回数
     const GOOD_SEARCH_MAX_RANDOM_CLICKS_PER_BOARD = 400; // 1盤面あたりランダムクリック上限
 
     let gameOver = false;
@@ -385,7 +385,7 @@
           }
         }
       }
-      // 良い盤面探索中でもここでは止めない
+      // 良い盤面探索中でもここでは止めない（探索側で gameOver を見て処理）
     }
 
     // ======== 良い盤面探索ロジック ========
@@ -501,16 +501,23 @@
       const totalCells = size * size;
       let solvedOrFlagged = 0;
       let bigNumberCount = 0; // 表示4以上の数字マスの個数
+      let openedCells = 0;
+      let openedNumberGe2 = 0; // 開いたマスのうち表示2以上の個数
 
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const cell = board[y][x];
 
           if (cell.open) {
+            openedCells++;
             solvedOrFlagged++;
-            // 開いている数字マスで displayCount >= 4 を数える
+            // 4以上の数字
             if (cell.displayCount != null && cell.displayCount >= 4) {
               bigNumberCount++;
+            }
+            // 2以上の数字
+            if (cell.displayCount != null && cell.displayCount >= 2) {
+              openedNumberGe2++;
             }
           } else if (!cell.open && cell.flag && cell.hintStatus === 'mine') {
             // 論理的に確定した地雷マス
@@ -519,10 +526,18 @@
         }
       }
 
+      // 条件1: 既存定義
       const enoughSolved = solvedOrFlagged >= totalCells * GOOD_RATIO;
       const enoughBigNumbers = bigNumberCount >= GOOD_BIG_NUMBER_MIN;
+      const condition1 = enoughSolved && enoughBigNumbers;
 
-      return enoughSolved && enoughBigNumbers;
+      // 条件2: 「50マス以上開いていて、そのうち8割以上が2以上の数字」
+      let condition2 = false;
+      if (openedCells >= 50) {
+        condition2 = (openedNumberGe2 >= openedCells * 0.8);
+      }
+
+      return condition1 || condition2;
     }
 
     // ======== 補助関数（ヒント・範囲推論） ========
@@ -777,7 +792,7 @@
         if (lv <= 2 && 2 <= hv) vals.push(2);
         if (vals.length === 0) return 1; // ありえないが、保険で最大リスク
 
-      let mineCount = 0;
+        let mineCount = 0;
         for (const v of vals) {
           if (v >= 1) mineCount++;
         }
